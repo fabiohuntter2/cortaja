@@ -470,7 +470,6 @@ function fitCanvas() {
   $('#bMagic').style.left = Math.max(8, (st.clientWidth - w) / 2 + 8) + 'px';
 }
 const easeOut = p => 1 - Math.pow(1 - clamp(p, 0, 1), 3);
-const HAS_FILTER = 'filter' in CanvasRenderingContext2D.prototype;
 /* efeito de transição no instante: d = segundos desde o corte (entrada), rest = segundos até o próximo corte (saída) */
 function trFx(tr, d, ntr, rest, W, H) {
   const f = { z: 1, tx: 0, ty: 0, rot: 0, blur: 0, ghost: 0, glitch: 0, ov: null };
@@ -502,6 +501,17 @@ function trFx(tr, d, ntr, rest, W, H) {
   }
   return f;
 }
+/* desfoque barato: reduz o quadro e amplia de volta (leve no celular e funciona em qualquer navegador) */
+let blurCv = null;
+function softBlur(b) {
+  const W = cv.width, H = cv.height, k = clamp(Math.round(b / 2), 3, 14);
+  const w = Math.max(8, Math.round(W / k)), h = Math.max(8, Math.round(H / k));
+  if (!blurCv) blurCv = document.createElement('canvas');
+  if (blurCv.width !== w || blurCv.height !== h) { blurCv.width = w; blurCv.height = h; }
+  const bc = blurCv.getContext('2d'); bc.imageSmoothingEnabled = true; bc.drawImage(cv, 0, 0, w, h);
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = clamp(b / 10, 0, 1);
+  ctx.drawImage(blurCv, 0, 0, W, H); ctx.restore();
+}
 function draw(paint) {
   const W = cv.width, H = cv.height, o = curOut;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
@@ -516,7 +526,6 @@ function draw(paint) {
     const src = (x, y) => paint ? paint(ctx, dx + x, dy + y, dw, dh) : ctx.drawImage(video, dx + x, dy + y, dw, dh);
     ctx.save();
     if (f.rot) { ctx.translate(W / 2, H / 2); ctx.rotate(f.rot); ctx.translate(-W / 2, -H / 2); }
-    if (f.blur > 0.5 && HAS_FILTER) ctx.filter = `blur(${f.blur.toFixed(1)}px)`;
     if (f.tx || f.ty) {
       // o quadro "dá a volta" para não aparecer fundo preto no movimento
       const sx = f.tx ? Math.sign(f.tx) * W : 0, sy = f.ty ? Math.sign(f.ty) * H : 0;
@@ -536,6 +545,7 @@ function draw(paint) {
       }
     }
     ctx.restore();
+    if (f.blur > 0.5) softBlur(f.blur * 1080 / W);
   }
   if (ov) { ctx.globalAlpha = clamp(ov[1], 0, 1); ctx.fillStyle = ov[0]; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   drawCaps(ctx, W, H, o);
@@ -963,10 +973,10 @@ async function exportFast(q) {
   const MB = await (MBp = MBp || import(MB_URL).catch(e => { MBp = null; throw e; }));
   const input = new MB.Input({ formats: MB.ALL_FORMATS, source: new MB.BlobSource(S.file) });
   const vt = await input.getPrimaryVideoTrack();
-  if (!vt || !(await vt.canDecode())) throw new Error('decodificação não suportada');
+  if (!vt || !(await within(vt.canDecode(), 15000))) throw new Error('decodificação não suportada');
   sizeCanvas(q);
   const W = cv.width, H = cv.height, br = q >= 1920 ? 10e6 : 5e6;
-  if (MB.canEncodeVideo && !(await MB.canEncodeVideo('avc', { width: W, height: H, bitrate: br }))) throw new Error('codificação H.264 não suportada');
+  if (MB.canEncodeVideo && !(await within(MB.canEncodeVideo('avc', { width: W, height: H, bitrate: br }), 15000))) throw new Error('codificação H.264 não suportada');
 
   // áudio: monta a trilha final já cortada, com micro-fades nos cortes para não estalar
   let abOut = [], acodec = null;
@@ -993,10 +1003,10 @@ async function exportFast(q) {
   output.addVideoTrack(vs, { frameRate: 30 });
   let as = null;
   if (abOut.length) { as = new MB.AudioBufferSource({ codec: acodec, bitrate: 160000 }); output.addAudioTrack(as); }
-  await output.start();
+  await within(output.start(), 15000);
   let wl = null; try { wl = await navigator.wakeLock.request('screen'); } catch (e) { }
   try {
-    if (as) { for (const b of abOut) await as.add(b); as.close(); }
+    if (as) { for (const b of abOut) await within(as.add(b), 15000); as.close(); }
     abOut = null;
     const sink = new MB.VideoSampleSink(vt), t0 = performance.now();
     let last = -1, shown = 0;
@@ -1061,12 +1071,17 @@ async function exportRealtime(q) {
         swap();
       }
       curSeg = i; curOut = offs[i]; draw();
-      await video.play();
+      await within(video.play(), 10000);
       if (!started) { rec.start(); started = true; } else rec.resume();
       prepare(i + 1);
-      await new Promise(res => {
+      await new Promise((res, rej) => {
+        let lastT = -1, lastAt = performance.now();
         const tick = () => {
           if (exCancel || video.ended || video.currentTime >= g.e - 0.012) return res();
+          const now = performance.now();
+          if (video.currentTime !== lastT || document.hidden) { lastT = video.currentTime; lastAt = now; }
+          else if (now - lastAt > 4000 && video.paused) video.play().catch(() => { });
+          if (now - lastAt > 15000) return rej(new Error('o vídeo parou de tocar no meio. Deixe a tela ligada e o app aberto, e tente de novo'));
           curOut = offs[i] + Math.max(0, video.currentTime - g.s); draw();
           busy('Exportando…', fmtT(curOut) + ' de ' + fmtT(total), curOut / total, () => exCancel = true);
           requestAnimationFrame(tick);
@@ -1075,7 +1090,7 @@ async function exportRealtime(q) {
       if (rec.state === 'recording') rec.pause();
       video.pause();
     }
-    if (started) { if (rec.state === 'paused') rec.resume(); rec.stop(); await stopped; }
+    if (started) { if (rec.state === 'paused') rec.resume(); rec.stop(); await within(stopped, 15000); }
   } catch (e) { err = e; console.error(e); try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (_) { } }
   vids.forEach(v => v.pause()); gOut.gain.value = 1; exporting = false; idle();
   try { wl && wl.release(); } catch (e) { }
