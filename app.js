@@ -214,7 +214,10 @@ function wkCall(msg, transfer, onProg) {
     wk.onmessage = e => {
       const m = e.data;
       if (m.type === 'progress') onProg && onProg(m.p);
-      else if (m.type === 'info') console.log('voz:', m.device);
+      else if (m.type === 'info') {
+        console.log('voz:', m.device);
+        if (m.fallback) { cfg.noGpu = true; saveCfg(); busy('Mudando para o modo compatível…', 'A placa de vídeo do aparelho falhou; seguindo pelo processador.'); }
+      }
       else if (m.type === 'error') rej(new Error(m.error));
       else res(m);
     };
@@ -229,7 +232,7 @@ async function ensureWords() {
   try {
     const files = {};
     busy('Preparando o reconhecimento de voz…', 'Na primeira vez baixa o modelo (fica salvo no aparelho).', 0);
-    await wkCall({ type: 'load', model: MODELS[cfg.model][1] }, null, p => {
+    await wkCall({ type: 'load', model: MODELS[cfg.model][1], noGpu: !!cfg.noGpu }, null, p => {
       if (p && p.file && p.total) {
         files[p.file] = [p.loaded || 0, p.total];
         let l = 0, t = 0; for (const k in files) { l += files[k][0]; t += files[k][1]; }
@@ -262,7 +265,11 @@ async function ensureWords() {
     S.words = words; return true;
   } catch (e) {
     console.error(e); idle();
-    toast('Reconhecimento de voz falhou: ' + (e.message || e) + '. Confira a internet (primeiro uso).', 5000);
+    const msg = String(e.message || e);
+    const net = /fetch|network|load|download|404|cors/i.test(msg) && !/device is lost|ortrun/i.test(msg);
+    toast(net ? 'Não consegui baixar o modelo de voz. Confira a internet (só precisa na primeira vez).'
+              : 'Reconhecimento de voz falhou. Tente de novo ou escolha uma qualidade mais leve.', 5000);
+    wk && wk.terminate(); wk = null;
     return false;
   }
 }
