@@ -260,6 +260,7 @@ async function ensureWords() {
       }
     }
     words.sort((x, y) => x.t0 - y.t0);
+    if (wk) { wk.terminate(); wk = null; }       // tira o modelo de voz da memória antes de editar/exportar
     idle();
     if (!words.length) { toast('Não encontrei fala neste vídeo.'); return false; }
     S.words = words; return true;
@@ -692,11 +693,12 @@ function openLimpo() {
 function sttOptions() {
   return `<div class="row nw">
     <label class="fld grow">Idioma<select id="oLang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}"${k === cfg.lang ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
-    <label class="fld grow">Qualidade<select id="oModel">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}"${k === cfg.model ? ' selected' : ''}>${v[0]}</option>`).join('')}</select></label></div>`;
+    <label class="fld grow">Qualidade<select id="oModel">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}"${k === cfg.model ? ' selected' : ''}>${v[0]}</option>`).join('')}</select></label></div>
+    <p class="note" id="oWarn"${cfg.model === 'melhor' ? '' : ' hidden'}>"Melhor" acerta mais, mas usa bastante memória. Feche os outros apps antes; se a página fechar sozinha, volte para "Boa".</p>`;
 }
 function bindStt(b) {
   on(b, '#oLang', 'change', el => { cfg.lang = el.value; saveCfg(); });
-  on(b, '#oModel', 'change', el => { cfg.model = el.value; saveCfg(); });
+  on(b, '#oModel', 'change', el => { cfg.model = el.value; saveCfg(); const w = b.querySelector('#oWarn'); if (w) w.hidden = el.value !== 'melhor'; });
 }
 const STY_HTML = {
   karaoke: 'SUA <span style="color:#ffe600">LEGENDA</span>',

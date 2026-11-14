@@ -3,10 +3,14 @@ import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers
 
 let asr = null, current = null, device = null, noGpu = false, progress_callback = null;
 
-const OPTS = {
+// No processador (wasm) a memória do celular é o limite: o modelo grande vai mais comprimido
+// para caber; os menores ficam com o codificador completo, que acerta mais.
+const OPTS = model => ({
   webgpu: { device: 'webgpu', dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' } },
-  wasm: { device: 'wasm', dtype: 'q8' },
-};
+  wasm: { device: 'wasm', dtype: /small|medium|large/.test(model)
+    ? { encoder_model: 'q8', decoder_model_merged: 'q4' }
+    : { encoder_model: 'fp32', decoder_model_merged: 'q8' } },
+});
 
 async function free() {
   const old = asr; asr = null; current = null; device = null;
@@ -16,9 +20,9 @@ async function free() {
 async function load(model) {
   if (asr && current === model) return;
   await free();
-  const tries = [];
-  if (!noGpu && self.navigator && navigator.gpu) tries.push(OPTS.webgpu);
-  tries.push(OPTS.wasm);
+  const o = OPTS(model), tries = [];
+  if (!noGpu && self.navigator && navigator.gpu) tries.push(o.webgpu);
+  tries.push(o.wasm);
   let last;
   for (const opt of tries) {
     try {

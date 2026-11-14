@@ -1,6 +1,6 @@
 // Mantém o app abrindo mesmo sem internet. Busca sempre a versão nova primeiro; usa a cópia salva se estiver offline.
-const CACHE = 'cortaja-v6';
-const SHELL = ['./', './index.html', './style.css?v=6', './app.js?v=6', './stt-worker.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
+const CACHE = 'cortaja-v7';
+const SHELL = ['./', './index.html', './style.css?v=7', './app.js?v=7', './stt-worker.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
