@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0c0e13">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>CortaJá</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;800;900&family=Playfair+Display:ital,wght@1,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=4">
+</head>
+<body>
+
+<!-- Tela inicial -->
+<section id="home">
+  <div class="home-in">
+    <img src="icon.svg" alt="" class="logo">
+    <h1>CortaJá</h1>
+    <p class="sub">Edite seus vídeos de fala em segundos, direto no celular.</p>
+    <label class="btn big" for="file">Escolher vídeo</label>
+    <input id="file" type="file" accept="video/*" hidden>
+    <ul class="feat">
+      <li><b>Corte limpo</b> tira pausas, repetições e erros de fala</li>
+      <li><b>Legendas automáticas</b> palavra por palavra, em 5 estilos</li>
+      <li><b>Zoom dinâmico</b>, textos e transições</li>
+      <li><b>Tudo no aparelho</b>: seu vídeo não sai do celular</li>
+    </ul>
+  </div>
+</section>
+
+<!-- Editor -->
+<section id="editor" hidden>
+  <header>
+    <button class="ic" id="bHome" aria-label="Trocar vídeo"></button>
+    <div class="grow"></div>
+    <button class="chip" id="bFmt">Formato</button>
+    <button class="btn" id="bExport">Exportar</button>
+  </header>
+
+  <div id="stage"><canvas id="cv" width="540" height="960"></canvas>
+    <button id="bMagic" aria-label="Edição automática"></button>
+  </div>
+
+  <div id="transport">
+    <button class="ic" id="bPlay" aria-label="Reproduzir"></button>
+    <div class="time"><b id="tCur">00:00</b><span id="tTot">00:00</span></div>
+    <button class="ic" id="bUndo" aria-label="Desfazer"></button>
+    <button class="ic" id="bRedo" aria-label="Refazer"></button>
+  </div>
+
+  <div id="tlWrap">
+    <div id="tl"><div class="sp"></div><div id="tlc"></div><div class="sp"></div></div>
+    <div id="needle"></div>
+  </div>
+
+  <nav id="tools"></nav>
+
+  <div id="sheet" hidden>
+    <div class="sh-head"><b id="shTitle"></b><button class="ic" id="shClose" aria-label="Fechar"></button></div>
+    <div id="shBody"></div>
+  </div>
+</section>
+
+<video id="vid" playsinline webkit-playsinline preload="auto"></video>
+<video id="vid2" playsinline webkit-playsinline preload="auto"></video>
+<video id="tv" playsinline webkit-playsinline muted preload="auto"></video>
+
+<div id="busy" hidden>
+  <div class="busy-in">
+    <b id="busyT"></b>
+    <div class="bar"><i id="busyB"></i></div>
+    <span id="busyS"></span>
+    <button class="chip" id="busyX" hidden>Cancelar</button>
+  </div>
+</div>
+<div id="toast" hidden></div>
+
+<script src="app.js?v=4"></script>
+</body>
+</html>
