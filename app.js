@@ -960,7 +960,9 @@ function openExport() {
   sheet('Exportar', `<p>O vídeo final tem ${fmtT(total)}. ${fast ? 'Exportação rápida ligada: deve levar bem menos que isso.' : 'A exportação leva mais ou menos esse tempo.'} Deixe o app aberto e a tela ligada.</p>
     ${webm ? '<p class="note">Este navegador grava em WebM. Para sair em MP4 (aceito pelo Instagram), use o Chrome atualizado ou o Safari.</p>' : ''}
     <div class="row"><button class="chip on" data-q="1920">Alta (1080p)</button><button class="chip" data-q="1280">Leve (720p)</button></div>
+    <label class="tog">Mostrar a marca (logo no canto)<input type="checkbox" id="eLogo"${cfg.logo.on ? ' checked' : ''}></label>
     <button class="btn wide" id="eGo">Exportar vídeo</button>`, b => {
+    b.querySelector('#eLogo').onchange = e => { cfg.logo.on = e.target.checked; saveCfg(); dirty = true; };
     let q = 1920;
     on(b, '[data-q]', 'click', el => { q = +el.dataset.q; b.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x === el)); });
     b.querySelector('#eGo').onclick = () => exportVideo(q);
