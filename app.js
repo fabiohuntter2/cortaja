@@ -976,13 +976,15 @@ document.addEventListener('visibilitychange', () => {
 const canFast = () => !cfg.noFast && window.isSecureContext && 'VideoEncoder' in window && 'AudioEncoder' in window && 'VideoDecoder' in window;
 /* alguns celulares travam o codificador/decodificador de vídeo sem dar erro: se nada andar por um tempo, desiste */
 const within = (p, ms) => { let t; return Promise.race([p, new Promise((_, rej) => t = setTimeout(() => rej(new Error('travou')), ms))]).finally(() => clearTimeout(t)); };
+let fastErr = '';
 async function exportVideo(q) {
+  fastErr = '';
   closeSheet(); pause();
   try { await within(marcaImg.decode(), 5000); } catch (e) { }
   if (canFast()) {
     try { const r = await exportFast(q); if (r) showResult(r, 'mp4'); return; }
     catch (e) {
-      console.warn('exportação rápida falhou', e); idle(); exporting = false; sizeCanvas(); seekOut(0);
+      console.warn('exportação rápida falhou', e); fastErr = String(e && e.message || e); idle(); exporting = false; sizeCanvas(); seekOut(0);
       if (exCancel) return toast('Exportação cancelada.');
       if (String(e && e.message) === 'travou') { cfg.noFast = true; saveCfg(); }
       toast('Exportação rápida não funcionou neste vídeo; usando o modo normal.', 3500);
@@ -1123,7 +1125,10 @@ async function exportRealtime(q) {
   try { wl && wl.release(); } catch (e) { }
   stream.getVideoTracks().forEach(t => t.stop());
   sizeCanvas(); seekOut(0);
-  if (err) return toast('A exportação falhou: ' + (err.message || err), 5000);
+  if (err) return sheet('A exportação falhou', `<p>${esc(String(err.message || err))}</p>
+    ${fastErr ? `<p class="note">Modo rápido: ${esc(fastErr)}</p>` : ''}
+    <p class="note">Tire um print desta tela e mande para o suporte. Tente de novo com a qualidade "Leve (720p)".</p>
+    <button class="btn wide" id="fxOk">Fechar</button>`, b => b.querySelector('#fxOk').onclick = closeSheet);
   if (exCancel || !parts.length) return toast('Exportação cancelada.');
   const type = (rec.mimeType || mime || 'video/webm').split(';')[0], ext = type.includes('mp4') ? 'mp4' : 'webm';
   showResult(new Blob(parts, { type }), ext);
