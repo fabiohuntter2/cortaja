@@ -37,12 +37,13 @@ const ICON = {
   trans: '<svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="7" height="12" rx="2"/><rect x="14.5" y="6" width="7" height="12" rx="2"/><path d="M12 3v18"/></svg>',
   zoom: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.5-4.5M11 8v6M8 11h6"/></svg>',
   dividir: '<svg viewBox="0 0 24 24"><path d="M12 3v18M8 7H4v10h4M16 7h4v10h-4"/></svg>',
+  marca: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><rect x="12.5" y="6.5" width="6" height="4" rx="1"/></svg>',
   excluir: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
 };
 
 const TOOLS = [
   ['limpo', 'Corte limpo'], ['pausas', 'Pausas'], ['legendas', 'Legendas'], ['texto', 'Texto'],
-  ['trans', 'Transições'], ['zoom', 'Zoom'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
+  ['trans', 'Transições'], ['zoom', 'Zoom'], ['marca', 'Marca'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
 ];
 const FORMATS = { orig: ['Original', 0], '9:16': ['9:16 Reels', 9 / 16], '4:5': ['4:5 Feed', 4 / 5], '1:1': ['1:1', 1], '16:9': ['16:9', 16 / 9] };
 const CAPSTYLES = {
@@ -80,7 +81,7 @@ let offs = [], total = 0, groups = [], zplan = [];
 let curSeg = 0, curOut = 0, playing = false, exporting = false, dirty = true, pendingT = null;
 let sel = -1, selText = null, hist = [], hi = -1;
 let A = null, analysisP = null, thumbs = [], thumbN = 0, tileW = 30, segCanvases = [];
-let cfg = { model: 'bom', lang: 'portuguese' };
+let cfg = { model: 'bom', lang: 'portuguese', logo: { on: true, pos: 'tr', size: 0.3 } };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('cortaja') || '{}')); } catch (e) { }
 const saveCfg = () => { try { localStorage.setItem('cortaja', JSON.stringify(cfg)); } catch (e) { } };
 
@@ -512,6 +513,28 @@ function softBlur(b) {
   ctx.save(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = clamp(b / 10, 0, 1);
   ctx.drawImage(blurCv, 0, 0, W, H); ctx.restore();
 }
+/* ---------- marca (logo animado no canto, em toda edição) ---------- */
+const MARCA = { fw: 260, fh: 153, n: 60, cols: 10, fps: 10 };
+const marcaImg = new Image(); marcaImg.onload = () => { dirty = true; }; marcaImg.src = 'marca.webp?v=1';
+function drawLogo(c, W, H, o) {
+  const L = cfg.logo; if (!L || !L.on || !marcaImg.naturalWidth) return;
+  const k = Math.floor(o * MARCA.fps) % MARCA.n, sx = (k % MARCA.cols) * MARCA.fw, sy = Math.floor(k / MARCA.cols) * MARCA.fh;
+  const sm = Math.min(W, H), w = sm * L.size, h = w * MARCA.fh / MARCA.fw, m = sm * 0.035;
+  c.drawImage(marcaImg, sx, sy, MARCA.fw, MARCA.fh, L.pos === 'tl' ? m : W - w - m, m, w, h);
+}
+function openMarca() {
+  pause();
+  const L = cfg.logo;
+  sheet('Marca', `<p>O logo da TV Huntter News aparece no canto de cima em todos os vídeos, inclusive no exportado.</p>
+    <div class="box">${L.on ? '<span class="ok">Ligada</span><button class="btn danger" id="lgT">Desligar</button>' : '<span>Desligada</span><button class="btn" id="lgT">Ligar</button>'}</div>
+    ${L.on ? `<div class="row">${[['tl', 'Canto esquerdo'], ['tr', 'Canto direito']].map(([k, n]) => `<button class="chip${L.pos === k ? ' on' : ''}" data-lp="${k}">${n}</button>`).join('')}</div>
+    ${range('lgS', 'Tamanho', 0.15, 0.5, 0.01, L.size)}` : ''}`, b => {
+    b.querySelector('#lgT').onclick = () => { L.on = !L.on; saveCfg(); dirty = true; openMarca(); };
+    on(b, '[data-lp]', 'click', el => { L.pos = el.dataset.lp; saveCfg(); dirty = true; openMarca(); });
+    on(b, '#lgS', 'input', el => { L.size = +el.value; b.querySelector('#lgSV').textContent = el.value; dirty = true; });
+    on(b, '#lgS', 'change', () => saveCfg());
+  });
+}
 function draw(paint) {
   const W = cv.width, H = cv.height, o = curOut;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
@@ -550,6 +573,7 @@ function draw(paint) {
   if (ov) { ctx.globalAlpha = clamp(ov[1], 0, 1); ctx.fillStyle = ov[0]; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   drawCaps(ctx, W, H, o);
   drawTexts(ctx, W, H, o);
+  drawLogo(ctx, W, H, o);
 }
 
 /* ---------- reprodução ---------- */
@@ -952,6 +976,7 @@ const canFast = () => !cfg.noFast && window.isSecureContext && 'VideoEncoder' in
 const within = (p, ms) => { let t; return Promise.race([p, new Promise((_, rej) => t = setTimeout(() => rej(new Error('travou')), ms))]).finally(() => clearTimeout(t)); };
 async function exportVideo(q) {
   closeSheet(); pause();
+  try { await within(marcaImg.decode(), 5000); } catch (e) { }
   if (canFast()) {
     try { const r = await exportFast(q); if (r) showResult(r, 'mp4'); return; }
     catch (e) {
@@ -1139,7 +1164,7 @@ async function loadVideo(file) {
 $('#bPlay').innerHTML = ICON.play; $('#bUndo').innerHTML = ICON.undo; $('#bRedo').innerHTML = ICON.redo;
 $('#bHome').innerHTML = ICON.home; $('#shClose').innerHTML = ICON.close; $('#bMagic').innerHTML = ICON.magic;
 $('#tools').innerHTML = TOOLS.map(([k, n]) => `<button data-tool="${k}">${ICON[k]}<span>${n}</span></button>`).join('');
-const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, dividir: splitHere, excluir: deleteSeg };
+const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, dividir: splitHere, excluir: deleteSeg };
 $('#tools').addEventListener('click', e => { const b = e.target.closest('[data-tool]'); if (b && !exporting) ACT[b.dataset.tool](); });
 $('#bPlay').onclick = () => playing ? pause() : play();
 $('#bUndo').onclick = () => restore(hi - 1);
