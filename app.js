@@ -859,7 +859,9 @@ document.addEventListener('visibilitychange', () => {
   if (!exporting) return;
   if (document.hidden) { exPaused = !video.paused; video.pause(); } else if (exPaused) { exPaused = false; video.play(); }
 });
-const canFast = () => window.isSecureContext && 'VideoEncoder' in window && 'AudioEncoder' in window && 'VideoDecoder' in window;
+const canFast = () => !cfg.noFast && window.isSecureContext && 'VideoEncoder' in window && 'AudioEncoder' in window && 'VideoDecoder' in window;
+/* alguns celulares travam o codificador/decodificador de vídeo sem dar erro: se nada andar por um tempo, desiste */
+const within = (p, ms) => { let t; return Promise.race([p, new Promise((_, rej) => t = setTimeout(() => rej(new Error('travou')), ms))]).finally(() => clearTimeout(t)); };
 async function exportVideo(q) {
   closeSheet(); pause();
   if (canFast()) {
@@ -867,6 +869,7 @@ async function exportVideo(q) {
     catch (e) {
       console.warn('exportação rápida falhou', e); idle(); exporting = false; sizeCanvas(); seekOut(0);
       if (exCancel) return toast('Exportação cancelada.');
+      if (String(e && e.message) === 'travou') { cfg.noFast = true; saveCfg(); }
       toast('Exportação rápida não funcionou neste vídeo; usando o modo normal.', 3500);
     }
   }
@@ -921,7 +924,11 @@ async function exportFast(q) {
     let last = -1, shown = 0;
     for (let i = 0; i < S.segs.length && !exCancel; i++) {
       const g = S.segs[i];
-      for await (const smp of sink.samples(g.s, g.e)) {
+      const it = sink.samples(g.s, g.e)[Symbol.asyncIterator]();
+      try { while (true) {
+        const nx = await within(it.next(), 12000);
+        if (nx.done) break;
+        const smp = nx.value;
         try {
           if (exCancel) break;
           const ot = offs[i] + Math.max(0, smp.timestamp - g.s);
@@ -929,21 +936,21 @@ async function exportFast(q) {
           if (last >= 0 && ot - last < 1 / 30 - 0.004) continue;      // no máximo 30 quadros por segundo
           curSeg = i; curOut = ot; last = ot;
           draw((c, x, y, w, h) => smp.draw(c, x, y, w, h));
-          await vs.add(ot, 1 / 30);
+          await within(vs.add(ot, 1 / 30), 12000);
           const now = performance.now();
           if (now - shown > 200) {
             shown = now; const el = (now - t0) / 1000, rate = ot / Math.max(el, 0.01);
             busy('Exportando…', fmtT(ot) + ' de ' + fmtT(total) + (el > 2 ? ` · ${rate.toFixed(1)}× mais rápido que o vídeo` : ''), ot / total, () => exCancel = true);
           }
         } finally { smp.close(); }
-      }
+      } } finally { try { it.return && it.return().catch(() => { }); } catch (_) { } }
     }
     vs.close();
-    if (exCancel) { await output.cancel(); return null; }
+    if (exCancel) { try { await within(output.cancel(), 3000); } catch (_) { } return null; }
     busy('Finalizando o arquivo…', '', 1);
-    await output.finalize();
+    await within(output.finalize(), 60000);
     return new Blob([output.target.buffer], { type: 'video/mp4' });
-  } catch (e) { try { await output.cancel(); } catch (_) { } throw e; }
+  } catch (e) { try { await within(output.cancel(), 3000); } catch (_) { } throw e; }
   finally {
     try { wl && wl.release(); } catch (e) { }
     exporting = false; idle(); sizeCanvas(); seekOut(0);
