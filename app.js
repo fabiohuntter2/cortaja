@@ -62,7 +62,7 @@ const TRANS = { '': 'Nenhuma', flash: 'Flash', fade: 'Fade', punch: 'Punch' };
 const S = {
   file: null, dur: 0, vw: 0, vh: 0,
   segs: [], words: null, texts: [],
-  caps: { on: false, style: 'karaoke', size: 64, y: 0.72, color: '#ffe600', n: 0 },
+  caps: { on: false, style: 'karaoke', size: 64, y: 0.82, color: '#ffe600', n: 0 },
   zoom: { on: false, amt: 0.14 },
   fmt: 'orig',
 };
@@ -344,7 +344,9 @@ const lum = c => { const n = parseInt(c.slice(1), 16); return (0.299 * (n >> 16)
 function rr(c, x, y, w, h, r) { c.beginPath(); if (c.roundRect) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h); }
 const SANS = 'Montserrat, system-ui, sans-serif', SERIF = '"Playfair Display", Georgia, serif';
 
+let capBox = null, capDrag = false;
 function drawCaps(c, W, H, o) {
+  capBox = null;
   if (!S.caps.on) return;
   const g = groupAt(o); if (!g) return;
   const st = S.caps.style, u = W / 1080, col = S.caps.color;
@@ -366,6 +368,8 @@ function drawCaps(c, W, H, o) {
     }
   }
   const lh = fs * 1.2, cy = H * S.caps.y;
+  capBox = [W * 0.04, cy - lines.length * lh / 2 - fs * .3, W * 0.92, lines.length * lh + fs * .6];
+  if (capDrag && !exporting) { c.save(); c.strokeStyle = '#fff'; c.lineWidth = 2 * u + 1; c.setLineDash([8 * u + 2, 6 * u + 2]); c.strokeRect(...capBox); c.restore(); }
   c.save(); c.textBaseline = 'middle'; c.textAlign = 'left'; c.lineJoin = 'round';
   if (st === 'impacto') { const a = Math.min(1, (o - g.o0) / 0.12), k = 0.82 + 0.18 * a; c.translate(W / 2, cy); c.scale(k, k); c.translate(-W / 2, -cy); }
   let idx = 0;
@@ -620,21 +624,25 @@ cv.addEventListener('pointerdown', e => {
   if (exporting) return;
   const [x, y] = cvPos(e);
   const t = [...S.texts].reverse().find(t => t._box && x >= t._box[0] && x <= t._box[0] + t._box[2] && y >= t._box[1] && y <= t._box[1] + t._box[3]);
-  drag = { t, x, y, ox: t && t.x, oy: t && t.y, moved: false };
+  const cap = !t && capBox && x >= capBox[0] && x <= capBox[0] + capBox[2] && y >= capBox[1] && y <= capBox[1] + capBox[3];
+  drag = { t, cap, x, y, ox: t && t.x, oy: t ? t.y : S.caps.y, moved: false };
   if (t) { selText = t.id; dirty = true; try { cv.setPointerCapture(e.pointerId); } catch (_) { } }
+  if (cap) { capDrag = true; dirty = true; try { cv.setPointerCapture(e.pointerId); } catch (_) { } }
 });
 cv.addEventListener('pointermove', e => {
-  if (!drag || !drag.t) return;
+  if (!drag || !(drag.t || drag.cap)) return;
   const [x, y] = cvPos(e);
   if (Math.abs(x - drag.x) + Math.abs(y - drag.y) > 8) drag.moved = true;
+  if (drag.cap) { if (drag.moved) { S.caps.y = clamp(drag.oy + (y - drag.y) / cv.height, 0.08, 0.94); dirty = true; } return; }
   if (drag.moved) { drag.t.x = clamp(drag.ox + (x - drag.x) / cv.width, 0.05, 0.95); drag.t.y = clamp(drag.oy + (y - drag.y) / cv.height, 0.04, 0.96); dirty = true; }
 });
 cv.addEventListener('pointerup', () => {
   if (!drag) return; const d = drag; drag = null;
+  if (d.cap) { capDrag = false; dirty = true; if (d.moved) { commit(); return; } }
   if (d.t) { if (d.moved) commit(); else openText(d.t.id); }
   else playing ? pause() : play();
 });
-cv.addEventListener('pointercancel', () => drag = null);
+cv.addEventListener('pointercancel', () => { drag = null; if (capDrag) { capDrag = false; dirty = true; } });
 
 /* ---------- painéis ---------- */
 let sheetClose = null;
@@ -720,7 +728,9 @@ function openCaps(tab = 'style') {
   let body = '';
   if (tab === 'style') body = `<div class="grid2">${Object.entries(CAPSTYLES).map(([k, v]) => `<button class="sty${S.caps.on && S.caps.style === k ? ' on' : ''}" data-sty="${k}"><span>${STY_HTML[k]}</span><small>${v.nome}</small></button>`).join('')}
       <button class="sty${S.caps.on ? '' : ' on'}" data-sty=""><span style="font-size:13px;font-weight:600;color:#8b92a5">Sem legenda</span></button></div>`;
-  if (tab === 'custom') body = `${range('cSize', 'Tamanho', 36, 110, 2, S.caps.size)}${range('cY', 'Altura na tela', 0.12, 0.92, 0.01, S.caps.y)}
+  if (tab === 'custom') body = `<p class="note">Dica: arraste a legenda no próprio vídeo para mudar de lugar.</p>
+      <div class="row">${[['Em cima', 0.16], ['No meio', 0.5], ['Embaixo', 0.84]].map(([n, v]) => `<button class="chip${Math.abs(S.caps.y - v) < 0.03 ? ' on' : ''}" data-cpos="${v}">${n}</button>`).join('')}</div>
+      ${range('cSize', 'Tamanho', 36, 110, 2, S.caps.size)}${range('cY', 'Altura na tela', 0.08, 0.94, 0.01, S.caps.y)}
       ${range('cN', 'Palavras por vez (0 = automático)', 0, 7, 1, S.caps.n)}<label class="fld">Cor de destaque${sws(S.caps.color)}</label>
       <button class="btn ghost wide" id="cRedo">Refazer transcrição</button>`;
   if (tab === 'edit') body = groups.length ? groups.map((g, k) => `<div class="capl"><button data-go="${k}">${fmtT(g.o0)}</button><input type="text" data-g="${k}" value="${esc(g.ws.map(x => x.text).join(' '))}"></div>`).join('')
@@ -733,6 +743,7 @@ function openCaps(tab = 'style') {
       if (el.id === 'cN') buildGroups(); dirty = true;
     });
     on(b, '#cSize,#cY,#cN', 'change', () => commit());
+    on(b, '[data-cpos]', 'click', el => { S.caps.y = +el.dataset.cpos; commit(); openCaps('custom'); });
     on(b, '.sw', 'click', el => { S.caps.color = el.dataset.c; commit(); openCaps('custom'); });
     on(b, '#cRedo', 'click', () => { S.words = null; S.caps.on = false; commit(); openCaps(); });
     on(b, '[data-go]', 'click', el => seekOut(groups[+el.dataset.go].o0 + 0.02));
