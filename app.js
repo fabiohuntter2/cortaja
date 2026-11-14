@@ -56,7 +56,16 @@ const MODELS = {
   melhor: ['Melhor (mais lenta)', 'onnx-community/whisper-small_timestamped'],
 };
 const LANGS = { portuguese: 'Português', english: 'Inglês', spanish: 'Espanhol' };
-const TRANS = { '': 'Nenhuma', flash: 'Flash', fade: 'Fade', punch: 'Punch' };
+const TRANS = {
+  '': 'Nenhuma', punch: 'Punch', zoom: 'Zoom', zoomout: 'Zoom out', whip: 'Chicote →', whipv: 'Chicote ↑',
+  spin: 'Giro', shake: 'Tremor', glitch: 'Glitch', blur: 'Desfoque', flash: 'Flash', fade: 'Fade',
+};
+// transições automáticas: maioria discreta, com uma mais marcante de vez em quando
+const AUTO_TR = ['punch', 'zoom', 'punch', 'whip', 'zoom', 'punch', 'glitch', 'zoom', 'punch', 'whipv', 'zoom', 'spin', 'punch', 'shake', 'zoom', 'blur'];
+function autoTransitions() {
+  let k = 0;
+  S.segs.forEach((g, i) => { if (i) g.tr = AUTO_TR[k++ % AUTO_TR.length]; });
+}
 
 /* ---------- estado ---------- */
 const S = {
@@ -460,21 +469,73 @@ function fitCanvas() {
   cv.style.left = (st.clientWidth - w) / 2 + 'px'; cv.style.top = (st.clientHeight - h) / 2 + 'px';
   $('#bMagic').style.left = Math.max(8, (st.clientWidth - w) / 2 + 8) + 'px';
 }
+const easeOut = p => 1 - Math.pow(1 - clamp(p, 0, 1), 3);
+const HAS_FILTER = 'filter' in CanvasRenderingContext2D.prototype;
+/* efeito de transição no instante: d = segundos desde o corte (entrada), rest = segundos até o próximo corte (saída) */
+function trFx(tr, d, ntr, rest, W, H) {
+  const f = { z: 1, tx: 0, ty: 0, rot: 0, blur: 0, ghost: 0, glitch: 0, ov: null };
+  const u = W / 1080;
+  if (tr && d < 0.6) {
+    if (tr === 'punch' && d < 0.28) f.z = 1 + 0.2 * Math.pow(1 - d / 0.28, 2);
+    if (tr === 'flash' && d < 0.28) f.ov = ['#fff', 0.9 * (1 - d / 0.28)];
+    if (tr === 'fade' && d < 0.3) f.ov = ['#000', 1 - d / 0.3];
+    if (tr === 'zoom' && d < 0.3) { const k = 1 - easeOut(d / 0.3); f.z = 1 + 0.4 * k; f.blur = 14 * u * k; }
+    if (tr === 'zoomout' && d < 0.5) { const k = 1 - easeOut(d / 0.5); f.z = 1 + 0.6 * k; }
+    if (tr === 'whip' && d < 0.3) { const k = 1 - easeOut(d / 0.3); f.tx = W * 0.6 * k; f.ghost = k; }
+    if (tr === 'whipv' && d < 0.3) { const k = 1 - easeOut(d / 0.3); f.ty = H * 0.6 * k; f.ghost = k; }
+    if (tr === 'spin' && d < 0.4) { const k = 1 - easeOut(d / 0.4); f.rot = -0.22 * k; f.z = 1 + 0.65 * k; f.blur = 8 * u * k; }
+    if (tr === 'shake' && d < 0.4) { const k = 1 - d / 0.4, a = W * 0.03 * k; f.tx = a * Math.sin(d * 95); f.ty = a * Math.cos(d * 73); f.z = 1 + 0.08 * k; }
+    if (tr === 'glitch' && d < 0.25) { const k = 1 - d / 0.25; f.glitch = k; f.ov = [Math.floor(d * 30) % 2 ? '#ff00aa' : '#00e5ff', 0.18 * k]; }
+    if (tr === 'blur' && d < 0.35) { const k = 1 - easeOut(d / 0.35); f.blur = 22 * u * k; f.z = 1 + 0.1 * k; }
+  }
+  // lado de saída: o trecho anterior já começa o movimento antes do corte
+  if (ntr && rest < 0.25) {
+    if (ntr === 'fade') f.ov = ['#000', 1 - rest / 0.25];
+    if (rest < 0.15) {
+      const k = easeOut(1 - rest / 0.15);
+      if (ntr === 'zoom') { f.z *= 1 + 0.4 * k; f.blur = Math.max(f.blur, 14 * u * k); }
+      if (ntr === 'whip') { f.tx = -W * 0.6 * k; f.ghost = k; }
+      if (ntr === 'whipv') { f.ty = -H * 0.6 * k; f.ghost = k; }
+      if (ntr === 'blur') f.blur = Math.max(f.blur, 22 * u * k);
+      if (ntr === 'spin') { f.rot = 0.22 * k; f.z *= 1 + 0.65 * k; }
+    }
+  }
+  return f;
+}
 function draw(paint) {
   const W = cv.width, H = cv.height, o = curOut;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   let ov = null;
   if (paint || video.readyState >= 2) {
-    let z = zoomAt(o);
-    const g = S.segs[curSeg], d = o - offs[curSeg], tr = g && curSeg > 0 ? g.tr : '';
-    if (tr === 'punch' && d < 0.28) z *= 1 + 0.2 * Math.pow(1 - d / 0.28, 2);
-    if (tr === 'flash' && d < 0.28) ov = ['#fff', 0.9 * (1 - d / 0.28)];
-    if (tr === 'fade' && d < 0.3) ov = ['#000', 1 - d / 0.3];
-    const nx = S.segs[curSeg + 1];
-    if (nx && nx.tr === 'fade') { const rest = (g.e - g.s) - d; if (rest < 0.25) ov = ['#000', 1 - rest / 0.25]; }
+    const g = S.segs[curSeg], d = o - offs[curSeg], nx = S.segs[curSeg + 1];
+    const f = trFx(g && curSeg > 0 ? g.tr : '', d, nx ? nx.tr : '', g ? (g.e - g.s) - d : 9, W, H);
+    ov = f.ov;
+    const z = zoomAt(o) * f.z;
     const s0 = Math.max(W / S.vw, H / S.vh), x0 = (W - S.vw * s0) / 2, y0 = (H - S.vh * s0) / 2, cx = W / 2, cy = H * 0.42;
     const dx = cx - (cx - x0) * z, dy = cy - (cy - y0) * z, dw = S.vw * s0 * z, dh = S.vh * s0 * z;
-    if (paint) paint(ctx, dx, dy, dw, dh); else ctx.drawImage(video, dx, dy, dw, dh);
+    const src = (x, y) => paint ? paint(ctx, dx + x, dy + y, dw, dh) : ctx.drawImage(video, dx + x, dy + y, dw, dh);
+    ctx.save();
+    if (f.rot) { ctx.translate(W / 2, H / 2); ctx.rotate(f.rot); ctx.translate(-W / 2, -H / 2); }
+    if (f.blur > 0.5 && HAS_FILTER) ctx.filter = `blur(${f.blur.toFixed(1)}px)`;
+    if (f.tx || f.ty) {
+      // o quadro "dá a volta" para não aparecer fundo preto no movimento
+      const sx = f.tx ? Math.sign(f.tx) * W : 0, sy = f.ty ? Math.sign(f.ty) * H : 0;
+      src(f.tx, f.ty); src(f.tx - sx, f.ty - sy);
+      if (f.ghost > 0.05) {                     // rastro de movimento
+        ctx.globalAlpha = 0.3 * f.ghost;
+        for (const m of [0.06, 0.12]) { const gx = f.tx ? -Math.sign(f.tx) * W * m * f.ghost : 0, gy = f.ty ? -Math.sign(f.ty) * H * m * f.ghost : 0; src(f.tx + gx, f.ty + gy); src(f.tx + gx - sx, f.ty + gy - sy); }
+        ctx.globalAlpha = 1;
+      }
+    } else src(0, 0);
+    if (f.glitch > 0) {                          // faixas deslocadas
+      const n = 7, fr = Math.floor(d * 30);
+      for (let k = 0; k < n; k++) {
+        const r = Math.sin((k + 1) * 12.9898 + fr * 78.233) * 43758.5453, off = (r - Math.floor(r) - 0.5) * W * 0.12 * f.glitch;
+        if (Math.abs(off) < 2) continue;
+        ctx.save(); ctx.beginPath(); ctx.rect(0, H * k / n + (r % 1) * H * 0.05, W, H / n * 0.45); ctx.clip(); src(off, 0); ctx.restore();
+      }
+    }
+    ctx.restore();
   }
   if (ov) { ctx.globalAlpha = clamp(ov[1], 0, 1); ctx.fillStyle = ov[0]; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   drawCaps(ctx, W, H, o);
@@ -796,13 +857,15 @@ function openTrans() {
   sheet('Transições', cuts ? `<p>Este vídeo tem ${cuts} cortes, ${used} com transição.</p>
     <div class="row">${Object.entries(TRANS).map(([k, v]) => `<button class="chip${k === pick ? ' on' : ''}" data-tr="${k}">${v}</button>`).join('')}</div>
     <button class="btn wide" id="trOne">Aplicar no corte mais perto da agulha</button>
-    <button class="btn ghost wide" id="trAll">Aplicar em todos os cortes</button>`
+    <button class="btn ghost wide" id="trAll">Aplicar em todos os cortes</button>
+    <button class="btn ghost wide" id="trAuto">Automático (variadas em todos os cortes)</button>`
     : '<p>As transições entram nos cortes. Use Dividir, Pausas ou Corte limpo para criar cortes primeiro.</p>', b => {
     on(b, '[data-tr]', 'click', el => { pick = el.dataset.tr; b.querySelectorAll('[data-tr]').forEach(x => x.classList.toggle('on', x === el)); });
     on(b, '#trOne', 'click', () => {
       let bi = 1; for (let i = 1; i < S.segs.length; i++) if (Math.abs(offs[i] - curOut) < Math.abs(offs[bi] - curOut)) bi = i;
       S.segs[bi].tr = pick; commit(); seekOut(Math.max(0, offs[bi] - 0.8)); openTrans(); play();
     });
+    on(b, '#trAuto', 'click', () => { autoTransitions(); commit(); openTrans(); seekOut(0); toast('Transições variadas aplicadas. Toque no vídeo para ver.'); });
     on(b, '#trAll', 'click', () => { S.segs.forEach((g, i) => { if (i) g.tr = pick; }); commit(); openTrans(); toast(pick ? 'Transição aplicada em todos os cortes.' : 'Transições removidas.'); });
   });
 }
@@ -830,15 +893,17 @@ function openMagic() {
     <label class="tog">Corte limpo (pausas e repetições)<input type="checkbox" id="mL" checked></label>
     <label class="tog">Legendas automáticas<input type="checkbox" id="mC" checked></label>
     <label class="tog">Zoom dinâmico<input type="checkbox" id="mZ" checked></label>
+    <label class="tog">Transições automáticas<input type="checkbox" id="mT" checked></label>
     ${sttOptions()}
     <button class="btn wide" id="mGo">Editar meu vídeo</button>`, b => {
     bindStt(b);
     b.querySelector('#mGo').onclick = async () => {
-      const L = b.querySelector('#mL').checked, C = b.querySelector('#mC').checked, Z = b.querySelector('#mZ').checked, before = total;
+      const L = b.querySelector('#mL').checked, C = b.querySelector('#mC').checked, Z = b.querySelector('#mZ').checked, T = b.querySelector('#mT').checked, before = total;
       if (L || C) { if (!await ensureWords()) return; }
       if (L) await cleanCut();
       if (C) S.caps.on = true;
       if (Z) S.zoom.on = true;
+      if (T) autoTransitions();
       commit(); seekOut(0); closeSheet(); toast(`Pronto: ${fmtT(before)} → ${fmtT(total)}. Toque no vídeo para assistir.`, 4000);
     };
   });
