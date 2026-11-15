@@ -44,8 +44,8 @@ const ICON = {
 };
 
 const TOOLS = [
-  ['limpo', 'Corte limpo'], ['pausas', 'Pausas'], ['legendas', 'Legendas'], ['texto', 'Texto'],
-  ['trans', 'Transições'], ['zoom', 'Zoom'], ['moldura', 'Moldura'], ['tarja', 'Tarjas'], ['marca', 'Marca'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
+  ['limpo', 'Corte limpo'], ['legendas', 'Legendas'], ['moldura', 'Moldura'], ['tarja', 'Tarjas'], ['texto', 'Texto'],
+  ['trans', 'Transições'], ['marca', 'Marca'], ['zoom', 'Zoom'], ['pausas', 'Pausas'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
 ];
 const FORMATS = { orig: ['Original', 0], '9:16': ['9:16 Reels', 9 / 16], '4:5': ['4:5 Feed', 4 / 5], '1:1': ['1:1', 1], '16:9': ['16:9', 16 / 9] };
 const CAPSTYLES = {
@@ -1507,7 +1507,7 @@ async function loadInner(raw, proj) {
     if (Math.abs(proj.dur - S.dur) > 0.25) toast('Esse vídeo é diferente do salvo; comecei uma edição nova.', 5000);
     else { try { Object.assign(S, JSON.parse(proj.state)); pos = proj.pos || 0; } catch (e) { } }
   }
-  $('#home').hidden = true; $('#editor').hidden = false; closeSheet();
+  $('#home').hidden = true; $('#editor').hidden = false; closeSheet(); nudgeTools();
   commit(); seekOut(Math.min(pos, total)); idle();
   if (proj && Math.abs(proj.dur - S.dur) <= 0.25) toast('Edição recuperada. Continue de onde parou.', 3500);
   try { await document.fonts.load('800 40px Montserrat'); await document.fonts.load('italic 700 40px "Playfair Display"'); } catch (e) { }
@@ -1520,6 +1520,9 @@ $('#bPlay').innerHTML = ICON.play; $('#bUndo').innerHTML = ICON.undo; $('#bRedo'
 $('#bHome').innerHTML = ICON.home; $('#shClose').innerHTML = ICON.close; $('#bMagic').innerHTML = ICON.magic;
 $('#tools').innerHTML = TOOLS.map(([k, n]) => `<button data-tool="${k}">${ICON[k]}<span>${n}</span></button>`).join('');
 const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, tarja: () => openLT(), moldura: openFrame, dividir: splitHere, excluir: deleteSeg };
+// mostra que a barra de ferramentas desliza para o lado
+function nudgeTools() { const t = $('#tools'); setTimeout(() => { t.scrollTo({ left: 140, behavior: 'smooth' }); setTimeout(() => t.scrollTo({ left: 0, behavior: 'smooth' }), 700); }, 900); }
+$('#tools').addEventListener('scroll', e => e.target.classList.toggle('end', e.target.scrollLeft + e.target.clientWidth >= e.target.scrollWidth - 4), { passive: true });
 $('#tools').addEventListener('click', e => { const b = e.target.closest('[data-tool]'); if (b && !exporting) ACT[b.dataset.tool](); });
 $('#bPlay').onclick = () => playing ? pause() : play();
 $('#bUndo').onclick = () => restore(hi - 1);
