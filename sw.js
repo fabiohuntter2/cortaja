@@ -1,6 +1,6 @@
 // Mantém o app abrindo mesmo sem internet. Busca sempre a versão nova primeiro; usa a cópia salva se estiver offline.
-const CACHE = 'cortaja-v18';
-const SHELL = ['./', './index.html', './style.css?v=18', './app.js?v=18', './stt-worker.js', './manifest.json', './icon.svg', './marca.webp?v=1', './icon-192.png', './icon-512.png'];
+const CACHE = 'cortaja-v19';
+const SHELL = ['./', './index.html', './style.css?v=19', './app.js?v=19', './stt-worker.js', './manifest.json', './icon.svg', './marca.webp?v=1', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -14,7 +14,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   const lib = url.hostname === 'cdn.jsdelivr.net' || url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (url.origin === location.origin) {
-    e.respondWith(fetch(req).then(r => { if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(req, cp)); } return r; })
+    e.respondWith(fetch(req, { cache: 'no-cache' }).then(r => { if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(req, cp)); } return r; })
       .catch(() => caches.match(req, { ignoreSearch: req.mode === 'navigate' })));
   } else if (lib) {
     // bibliotecas com versão fixa: guarda a primeira cópia e reaproveita
