@@ -37,13 +37,14 @@ const ICON = {
   trans: '<svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="7" height="12" rx="2"/><rect x="14.5" y="6" width="7" height="12" rx="2"/><path d="M12 3v18"/></svg>',
   zoom: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.5-4.5M11 8v6M8 11h6"/></svg>',
   dividir: '<svg viewBox="0 0 24 24"><path d="M12 3v18M8 7H4v10h4M16 7h4v10h-4"/></svg>',
+  tarja: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14h12l2 3H3z" fill="currentColor"/><path d="M6 11h7"/></svg>',
   marca: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><rect x="12.5" y="6.5" width="6" height="4" rx="1"/></svg>',
   excluir: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
 };
 
 const TOOLS = [
   ['limpo', 'Corte limpo'], ['pausas', 'Pausas'], ['legendas', 'Legendas'], ['texto', 'Texto'],
-  ['trans', 'Transições'], ['zoom', 'Zoom'], ['marca', 'Marca'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
+  ['trans', 'Transições'], ['zoom', 'Zoom'], ['tarja', 'Tarjas'], ['marca', 'Marca'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
 ];
 const FORMATS = { orig: ['Original', 0], '9:16': ['9:16 Reels', 9 / 16], '4:5': ['4:5 Feed', 4 / 5], '1:1': ['1:1', 1], '16:9': ['16:9', 16 / 9] };
 const CAPSTYLES = {
@@ -410,6 +411,7 @@ function drawTexts(c, W, H, o) {
   for (const t of S.texts) {
     t._box = null;
     if (o < t.t0 || o >= t.t1) continue;
+    if (t.kind === 'lt') { drawLT(c, W, H, o, t); continue; }
     const fs = t.size * u, lines = t.text.split('\n'), lh = fs * 1.28;
     c.save(); c.font = `800 ${fs}px ${SANS}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
     const a = Math.min(1, (o - t.t0) / 0.15), cx = t.x * W, cy = t.y * H;
@@ -427,6 +429,117 @@ function drawTexts(c, W, H, o) {
     t._box = [cx - bw / 2 - fs * .4, cy - bh / 2, bw + fs * .8, bh];
     if (selText === t.id && !exporting) { c.save(); c.strokeStyle = '#fff'; c.lineWidth = 2 * u + 1; c.setLineDash([8 * u + 2, 6 * u + 2]); c.strokeRect(...t._box); c.restore(); }
   }
+}
+
+/* ---------- tarjas (lower thirds) ---------- */
+const LT_SHAPES = { barra: 'Barra', duas: 'Duas faixas', jornal: 'Jornal', pilula: 'Pílula', linha: 'Linha', caixa: 'Caixa' };
+const LT_BG = ['#111111', '#ffffff', '#1e293b', '#0b3d91', '#7f1d1d', '#14532d'];
+const LT_POS = {           // [x, y, alinhamento]
+  be: ['Embaixo esq.', 0.05, 0.8, 'l'], bc: ['Embaixo centro', 0.5, 0.8, 'c'], bd: ['Embaixo dir.', 0.95, 0.8, 'r'],
+  ce: ['Em cima esq.', 0.05, 0.2, 'l'], cd: ['Em cima dir.', 0.95, 0.2, 'r'],
+  le: ['Lado esquerdo', 0.03, 0.5, 'l'], ld: ['Lado direito', 0.97, 0.5, 'r'],
+};
+const ink = col => lum(col) > .6 ? '#111' : '#fff';
+function drawLT(c, W, H, o, t) {
+  const u = W / 1080 * t.size, side = t.align;
+  const fT = 50 * u, fS = 32 * u, pad = 26 * u;
+  c.save();
+  c.font = t.shape === 'jornal' ? `900 italic ${fT}px ${SANS}` : `800 ${fT}px ${SANS}`;
+  const wT = c.measureText(t.shape === 'jornal' ? t.text.toUpperCase() : t.text).width;
+  c.font = `600 ${fS}px ${SANS}`; const wS = t.sub ? c.measureText(t.sub).width : 0;
+  const hT = fT * 1.55, hS = t.sub ? fS * 1.6 : 0;
+  const w = Math.max(wT, wS) + pad * 2 + (t.shape === 'barra' || t.shape === 'caixa' ? 14 * u : 0) + (t.shape === 'pilula' ? hT * 0.7 : 0) + (t.shape === 'jornal' ? hT * 0.6 : 0);
+  const h = hT + hS + (t.shape === 'linha' ? 10 * u : 0);
+  const x0 = side === 'l' ? t.x * W : side === 'r' ? t.x * W - w : t.x * W - w / 2, y0 = t.y * H - h / 2;
+  // entrada (revela do lado de onde vem) e saída
+  const pin = easeOut((o - t.t0) / 0.45), pout = easeOut((t.t1 - o) / 0.3), r = Math.min(pin, pout);
+  c.globalAlpha = clamp(r * 1.6, 0, 1);
+  c.beginPath();
+  if (side === 'r') c.rect(x0 + w * (1 - r), y0 - 4 * u, w * r + 2, h + 8 * u);
+  else if (side === 'c') c.rect(x0 + w * (1 - r) / 2, y0 - 4 * u, w * r + 2, h + 8 * u);
+  else c.rect(x0 - 2, y0 - 4 * u, w * r + 2, h + 8 * u);
+  c.clip();
+  c.textBaseline = 'middle';
+  const A = t.c1, B = t.c2, tx = (x, y, s, f, col, al = 'left') => { c.font = f; c.fillStyle = col; c.textAlign = al; c.fillText(s, x, y); };
+  const FT = `800 ${fT}px ${SANS}`, FS = `600 ${fS}px ${SANS}`, yT = y0 + hT / 2, yS = y0 + hT + hS / 2;
+  if (t.shape === 'barra') {
+    c.fillStyle = A; c.fillRect(x0, y0, 14 * u, h);
+    c.fillStyle = B; c.fillRect(x0 + 14 * u, y0, w - 14 * u, hT);
+    if (t.sub) { c.fillStyle = A; c.fillRect(x0 + 14 * u, y0 + hT, w - 14 * u, hS); }
+    tx(x0 + 14 * u + pad, yT, t.text, FT, ink(B)); if (t.sub) tx(x0 + 14 * u + pad, yS, t.sub, FS, ink(A));
+  } else if (t.shape === 'duas') {
+    c.font = FT; const w1 = wT + pad * 2; c.font = FS; const w2 = wS + pad * 2;
+    const a1 = side === 'r' ? x0 + w - w1 : side === 'c' ? x0 + (w - w1) / 2 : x0, a2 = side === 'r' ? x0 + w - w2 : side === 'c' ? x0 + (w - w2) / 2 : x0;
+    c.fillStyle = A; c.fillRect(a1, y0, w1, hT); tx(a1 + pad, yT, t.text, FT, ink(A));
+    if (t.sub) { c.fillStyle = B; c.fillRect(a2, y0 + hT, w2, hS); tx(a2 + pad, yS, t.sub, FS, ink(B)); }
+  } else if (t.shape === 'jornal') {
+    const sk = hT * 0.3;
+    c.fillStyle = A; c.beginPath(); c.moveTo(x0 + sk, y0); c.lineTo(x0 + w, y0); c.lineTo(x0 + w - sk, y0 + hT); c.lineTo(x0, y0 + hT); c.closePath(); c.fill();
+    c.save(); c.clip(); c.fillStyle = 'rgba(255,255,255,.18)'; c.fillRect(x0, y0, w, hT * 0.42); c.restore();
+    tx(x0 + sk + pad, yT, t.text.toUpperCase(), `900 italic ${fT}px ${SANS}`, ink(A));
+    if (t.sub) { c.fillStyle = B; c.beginPath(); c.moveTo(x0, y0 + hT); c.lineTo(x0 + w - sk, y0 + hT); c.lineTo(x0 + w - sk * 2, y0 + h); c.lineTo(x0, y0 + h); c.closePath(); c.fill(); tx(x0 + pad, yS, t.sub, FS, ink(B)); }
+  } else if (t.shape === 'pilula') {
+    c.fillStyle = B; rr(c, x0, y0, w, h, Math.min(h / 2, 60 * u)); c.fill();
+    const d = hT * 0.5; c.fillStyle = A; c.beginPath(); c.arc(x0 + pad + d / 2, y0 + h / 2, d / 2, 0, 7); c.fill();
+    const lx = x0 + pad + d + 16 * u;
+    tx(lx, t.sub ? yT + 4 * u : y0 + h / 2, t.text, FT, ink(B)); if (t.sub) tx(lx, yS - 6 * u, t.sub, FS, A === B ? ink(B) : A);
+  } else if (t.shape === 'linha') {
+    c.shadowColor = 'rgba(0,0,0,.75)'; c.shadowBlur = 14 * u;
+    const al = side === 'r' ? 'right' : side === 'c' ? 'center' : 'left', ax = side === 'r' ? x0 + w - pad : side === 'c' ? x0 + w / 2 : x0 + pad;
+    tx(ax, yT, t.text, FT, '#fff', al);
+    c.shadowBlur = 0; const lw = (Math.max(wT, wS)) * pin, lx = side === 'r' ? ax - lw : side === 'c' ? ax - lw / 2 : ax;
+    c.fillStyle = A; c.fillRect(lx, y0 + hT, lw, 8 * u);
+    if (t.sub) { c.shadowBlur = 14 * u; tx(ax, yS + 10 * u, t.sub, FS, '#fff', al); }
+  } else {                                                // caixa
+    c.fillStyle = B; c.globalAlpha *= 0.82; rr(c, x0, y0, w, h, 16 * u); c.fill(); c.globalAlpha = clamp(r * 1.6, 0, 1);
+    c.fillStyle = A; rr(c, x0, y0, 14 * u, h, 7 * u); c.fill();
+    tx(x0 + 14 * u + pad, yT, t.text, FT, ink(B)); if (t.sub) tx(x0 + 14 * u + pad, yS, t.sub, FS, A);
+  }
+  c.restore();
+  t._box = [x0, y0, w, h];
+  if (selText === t.id && !exporting) { c.save(); c.strokeStyle = '#fff'; c.lineWidth = 2 * u + 1; c.setLineDash([8 * u + 2, 6 * u + 2]); c.strokeRect(x0 - 4, y0 - 4, w + 8, h + 8); c.restore(); }
+}
+function openLT(id) {
+  pause();
+  let t = S.texts.find(t => t.id === id);
+  if (!t) {
+    const t0 = Math.min(curOut, Math.max(0, total - 0.5)), P = LT_POS[cfg.ltPos || 'be'];
+    t = { id: 'l' + Date.now(), kind: 'lt', text: 'Nome do convidado', sub: 'Cargo ou informação', t0, t1: Math.min(total, t0 + 5),
+      shape: cfg.ltShape || 'barra', c1: cfg.ltC1 || '#ff5a36', c2: cfg.ltC2 || '#111111', size: 1, x: P[1], y: P[2], align: P[3] };
+    S.texts.push(t); commit();
+  }
+  selText = t.id; dirty = true;
+  if (curOut < t.t0 + 0.5 || curOut >= t.t1) seekOut(Math.min(t.t0 + 0.6, t.t1 - 0.05));
+  const keep = () => { cfg.ltShape = t.shape; cfg.ltC1 = t.c1; cfg.ltC2 = t.c2; saveCfg(); };   // próxima tarja já vem no mesmo estilo
+  sheet('Tarja', `<input type="text" id="lT" value="${esc(t.text)}" placeholder="Título (nome)">
+    <input type="text" id="lS" value="${esc(t.sub || '')}" placeholder="Linha de baixo (opcional)">
+    <p class="note">Modelo</p>
+    <div class="row">${Object.entries(LT_SHAPES).map(([k, v]) => `<button class="chip${t.shape === k ? ' on' : ''}" data-sh="${k}">${v}</button>`).join('')}</div>
+    <p class="note">Posição (ou arraste a tarja no vídeo)</p>
+    <div class="row">${Object.entries(LT_POS).map(([k, v]) => `<button class="chip" data-ps="${k}">${v[0]}</button>`).join('')}</div>
+    <p class="note">Cor de destaque</p>
+    <div class="row">${COLORS.map(cl => `<button class="sw${cl === t.c1 ? ' on' : ''}" data-c1="${cl}" style="background:${cl}"></button>`).join('')}</div>
+    <p class="note">Cor do fundo</p>
+    <div class="row">${[...new Set([...LT_BG, ...COLORS])].map(cl => `<button class="sw${cl === t.c2 ? ' on' : ''}" data-c2="${cl}" style="background:${cl}"></button>`).join('')}</div>
+    ${range('lZ', 'Tamanho', 0.6, 1.6, 0.05, t.size)}
+    <p class="note" id="lI"></p>
+    <div class="row"><button class="chip" id="lA">Começa na agulha</button><button class="chip" id="lB">Termina na agulha</button><button class="chip" id="lAll">Vídeo todo</button></div>
+    <button class="btn danger wide" id="lDel">Excluir tarja</button>`, b => {
+    const info = () => b.querySelector('#lI').textContent = `Aparece de ${fmtT(t.t0)} até ${fmtT(Math.min(t.t1, total))}`; info();
+    const iT = b.querySelector('#lT'), iS = b.querySelector('#lS');
+    iT.oninput = () => { t.text = iT.value; dirty = true; }; iS.oninput = () => { t.sub = iS.value; dirty = true; };
+    iT.onchange = iS.onchange = () => commit();
+    on(b, '[data-sh]', 'click', el => { t.shape = el.dataset.sh; keep(); commit(); openLT(t.id); });
+    on(b, '[data-ps]', 'click', el => { const P = LT_POS[el.dataset.ps]; t.x = P[1]; t.y = P[2]; t.align = P[3]; cfg.ltPos = el.dataset.ps; saveCfg(); commit(); dirty = true; });
+    on(b, '[data-c1]', 'click', el => { t.c1 = el.dataset.c1; keep(); commit(); openLT(t.id); });
+    on(b, '[data-c2]', 'click', el => { t.c2 = el.dataset.c2; keep(); commit(); openLT(t.id); });
+    on(b, '#lZ', 'input', el => { t.size = +el.value; b.querySelector('#lZV').textContent = el.value; dirty = true; });
+    on(b, '#lZ', 'change', () => commit());
+    b.querySelector('#lA').onclick = () => { if (curOut >= t.t1 - 0.2) t.t1 = Math.min(total, curOut + 5); t.t0 = Math.min(curOut, t.t1 - 0.2); commit(); info(); };
+    b.querySelector('#lB').onclick = () => { if (curOut <= t.t0 + 0.2) return toast('Mova a agulha para depois do começo.'); t.t1 = curOut; commit(); info(); };
+    b.querySelector('#lAll').onclick = () => { t.t0 = 0; t.t1 = total + 999; commit(); info(); };
+    b.querySelector('#lDel').onclick = () => { S.texts = S.texts.filter(x => x !== t); selText = null; commit(); closeSheet(); };
+  });
 }
 
 /* ---------- zoom dinâmico ---------- */
@@ -643,7 +756,7 @@ function buildTimeline() {
   tlc.innerHTML = ''; segCanvases = [];
   const dpr = Math.min(2, devicePixelRatio || 1), frag = document.createDocumentFragment();
   for (const t of S.texts) {
-    const el = document.createElement('div'); el.className = 'tbar'; el.dataset.id = t.id; el.textContent = t.text.replace(/\n/g, ' ');
+    const el = document.createElement('div'); el.className = 'tbar' + (t.kind === 'lt' ? ' lt' : ''); el.dataset.id = t.id; el.textContent = t.text.replace(/\n/g, ' ');
     el.style.left = t.t0 * PPS + 'px'; el.style.width = Math.max(14, (Math.min(t.t1, total) - t.t0) * PPS) + 'px'; frag.appendChild(el);
   }
   if (S.caps.on) for (const g of groups) {
@@ -705,7 +818,7 @@ tl.addEventListener('scroll', () => {
 }, { passive: true });
 tl.addEventListener('pointerdown', () => pause());
 tlc.addEventListener('click', e => {
-  const tb = e.target.closest('.tbar'); if (tb) return openText(tb.dataset.id);
+  const tb = e.target.closest('.tbar'); if (tb) return openAny(tb.dataset.id);
   if (e.target.closest('.cap')) return openCaps('edit');
   const sg = e.target.closest('.seg'); if (!sg) return;
   sel = sel === +sg.dataset.i ? -1 : +sg.dataset.i;
@@ -734,7 +847,7 @@ cv.addEventListener('pointermove', e => {
 cv.addEventListener('pointerup', () => {
   if (!drag) return; const d = drag; drag = null;
   if (d.cap) { capDrag = false; dirty = true; if (d.moved) { commit(); return; } }
-  if (d.t) { if (d.moved) commit(); else openText(d.t.id); }
+  if (d.t) { if (d.moved) commit(); else openAny(d.t.id); }
   else playing ? pause() : play();
 });
 cv.addEventListener('pointercancel', () => { drag = null; if (capDrag) { capDrag = false; dirty = true; } });
@@ -853,6 +966,7 @@ function openCaps(tab = 'style') {
   });
 }
 
+const openAny = id => { const t = S.texts.find(t => t.id === id); return t && t.kind === 'lt' ? openLT(id) : openText(id); };
 function openText(id) {
   pause();
   let t = S.texts.find(t => t.id === id);
@@ -1171,7 +1285,7 @@ async function loadVideo(file) {
 $('#bPlay').innerHTML = ICON.play; $('#bUndo').innerHTML = ICON.undo; $('#bRedo').innerHTML = ICON.redo;
 $('#bHome').innerHTML = ICON.home; $('#shClose').innerHTML = ICON.close; $('#bMagic').innerHTML = ICON.magic;
 $('#tools').innerHTML = TOOLS.map(([k, n]) => `<button data-tool="${k}">${ICON[k]}<span>${n}</span></button>`).join('');
-const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, dividir: splitHere, excluir: deleteSeg };
+const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, tarja: () => openLT(), dividir: splitHere, excluir: deleteSeg };
 $('#tools').addEventListener('click', e => { const b = e.target.closest('[data-tool]'); if (b && !exporting) ACT[b.dataset.tool](); });
 $('#bPlay').onclick = () => playing ? pause() : play();
 $('#bUndo').onclick = () => restore(hi - 1);
