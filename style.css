@@ -54,6 +54,7 @@ header{display:flex;align-items:center;gap:8px;padding:6px 10px}
 .tbar{top:10px;background:#f59e0b;color:#231500}
 .tbar.lt{background:#38bdf8;color:#04202e}
 .tbar.fx{background:#ff4a3a;color:#fff}
+.tbar.img{background:#a3e635;color:#1a2e05}
 .cap{top:34px;background:#1b6f63;color:#d9fff7}
 .seg{position:absolute;top:60px;height:62px;border-radius:8px;overflow:hidden;background:#222733;display:flex;outline:2px solid transparent;outline-offset:-2px}
 .seg canvas{height:62px;flex:none;display:block}
