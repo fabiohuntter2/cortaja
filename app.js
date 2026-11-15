@@ -486,9 +486,11 @@ const FXS = {
   vidro: ['Texto 3D', 'Frase-síntese em letras 3D vermelhas com brilho'],
   anel: ['Zoom com anel', 'Anel vermelho que se expande e empurra o zoom na frase de virada'],
   cam: ['Câmera em card', 'O vídeo vira um card "CAM · 01" sobre fundo escuro com brilho vermelho'],
+  contador: ['Contador', 'Número subindo do zero até o valor falado (R$, %, mil, milhões)'],
+  grafico: ['Gráfico', 'Barras crescendo a cada número falado, com o valor em destaque'],
 };
 const STOP = new Set('a o as os um uma uns umas de da do das dos em na no nas nos por para pra com sem que e é ou se mas mais muito muita já não sim eu tu ele ela nós vós eles elas me te lhe isso isto esse essa este esta aquele aquela aqui ali lá então tá né foi ser ter tem vai vou ao aos à às pelo pela pelos pelas seu sua seus suas meu minha nosso nossa também como quando onde porque porquê qual quais quem'.split(' '));
-const clean = w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+const clean = w => w.replace(/^[^\p{L}\p{N}$]+|[^\p{L}\p{N}%]+$/gu, '');
 const easeBack = p => { p = clamp(p, 0, 1); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
 const smooth = p => { p = clamp(p, 0, 1); return p * p * (3 - 2 * p); };
 const rnd = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
@@ -625,7 +627,9 @@ function drawFX(c, W, H, o, t) {
       fitFont(c, up(t.text), 900, 92 * k, 960 * k); c.fillStyle = MX.white; c.shadowColor = 'rgba(0,0,0,.7)'; c.shadowBlur = 18 * k; c.fillText(up(t.text), 0, 0); c.restore();
     }
     box = [80 * k, t.y * H - 90 * k, W - 160 * k, 120 * k];
-  } else if (t.fx === 'cam') {
+  } else if (t.fx === 'contador') box = drawCounter(c, W, H, o, t, k, a);
+  else if (t.fx === 'grafico') box = drawChart(c, W, H, o, t, k, a);
+  else if (t.fx === 'cam') {
     box = null;
   }
   c.restore();
@@ -672,6 +676,7 @@ function autoMotion() {
         t0: Math.max(ws2[0].o0, b.o0 + 3.3), t1: Math.min(total, ws2[ws2.length - 1].o1 + 1.5), y: 0.7 }); }
     else { const w = kw[0], idx = b.ws.indexOf(w); add({ fx: 'anel', text: b.ws.slice(idx, idx + 3).map(x => clean(x.text)).join(' '), t0: w.o0, t1: Math.min(b.o1, w.o0 + 2.2), y: 0.68 }); }
   });
+  autoNumbers();
   return true;
 }
 
@@ -682,6 +687,7 @@ function openMotion(id) {
     const n = S.texts.filter(x => x.kind === 'fx').length;
     sheet('Motion', `<p>Efeitos no estilo de notícia preto e vermelho. Os textos vêm da sua fala (dá para editar).</p>
       <button class="btn wide" id="mxAuto">Estilo notícia automático</button>
+      <button class="btn ghost wide" id="mxNum">Só números e gráficos da fala</button>
       ${S.words ? '' : '<p class="note">Para o automático, gere as legendas primeiro (Legendas → Gerar). Ele precisa saber o que foi falado.</p>'}
       <p class="note">Ou adicione um efeito no ponto da agulha:</p>
       <div class="grid2">${Object.entries(FXS).map(([k2, v]) => `<button class="sty" data-fxa="${k2}"><span style="font-size:13px">${v[0]}</span><small>${v[1]}</small></button>`).join('')}</div>
@@ -691,13 +697,21 @@ function openMotion(id) {
         if (!autoMotion()) return toast('Não encontrei fala suficiente para montar os efeitos.', 4000);
         commit(); closeSheet(); seekOut(0); toast(`Pronto: ${S.texts.filter(x => x.kind === 'fx').length} efeitos montados com a sua fala. Toque ▶ para ver.`, 4500);
       };
+      b.querySelector('#mxNum').onclick = () => {
+        if (!S.words) return toast('Gere as legendas primeiro: o app precisa saber os números falados.', 4500);
+        S.texts = S.texts.filter(x => !(x.kind === 'fx' && (x.fx === 'contador' || x.fx === 'grafico')));
+        const n = autoNumbers(); if (!n) return toast('Não encontrei números na fala.', 4000);
+        commit(); closeSheet(); toast(`${n} ${n > 1 ? 'contadores/gráficos montados' : 'contador/gráfico montado'} com os números que você falou.`, 4500);
+      };
       on(b, '[data-fxa]', 'click', el => {
         const fx = el.dataset.fxa, t0 = Math.min(curOut, Math.max(0, total - 0.5)), ws = wordsIn(t0, t0 + 3).map(w => clean(w.text)).filter(Boolean);
         const kw = ws.filter(w => w.length >= 5 && !STOP.has(w.toLowerCase()));
+        const nums = spokenNumbers().filter(n2 => n2.o0 >= t0 - 0.3 && n2.o0 < t0 + 8);
         const nt = { id: 'f' + Date.now(), kind: 'fx', fx, x: 0.5, y: { titulo: 0.1, mural: 0.62, vidro: 0.7, anel: 0.68, doodle: 0.66, cam: 0.5 }[fx], t0,
           t1: Math.min(total, t0 + ({ cam: 5, titulo: 3.2, mural: 3.5 }[fx] || 2.2)), n: 1, N: 1,
           text: fx === 'cam' ? 'CAM · 01' : fx === 'doodle' ? (kw.sort((p2, q2) => q2.length - p2.length)[0] || ws[0] || 'IMPACTO') : fx === 'mural' ? (kw.slice(0, 4).join(' | ') || 'MANCHETE') : ws.slice(0, fx === 'titulo' ? 4 : 3).join(' ') || 'SEU TEXTO',
           sub: fx === 'titulo' ? ws.slice(4, 9).join(' ') : '' };
+        if (fx === 'contador' || fx === 'grafico') { nt.text = fx === 'contador' ? (nums[0] ? nums[0].shown : '100') : (nums.length >= 2 ? nums.slice(0, 5).map(n2 => n2.shown).join(' | ') : '10 | 25 | 40'); nt.sub = nums[0] ? nums[0].label : ''; nt.y = 0.68; }
         S.texts.push(nt); commit(); openMotion(nt.id);
       });
       const clr = b.querySelector('#mxClr'); if (clr) clr.onclick = () => { S.texts = S.texts.filter(x => x.kind !== 'fx'); selText = null; commit(); openMotion(); };
@@ -706,10 +720,10 @@ function openMotion(id) {
   }
   selText = t.id; dirty = true;
   if (curOut < t.t0 + 0.3 || curOut >= t.t1) seekOut(Math.min(t.t0 + (t.fx === 'titulo' ? 0.8 : 0.6), t.t1 - 0.05));
-  const hasSub = t.fx === 'titulo' || t.fx === 'vidro';
+  const hasSub = ['titulo', 'vidro', 'contador', 'grafico'].includes(t.fx);
   sheet(FXS[t.fx][0], `<p class="note">${FXS[t.fx][1]}</p>
-    <input type="text" id="mxT" value="${esc(t.text || '')}" placeholder="${t.fx === 'mural' ? 'Etiquetas separadas por |' : 'Texto'}">
-    ${hasSub ? `<input type="text" id="mxS" value="${esc(t.sub || '')}" placeholder="${t.fx === 'titulo' ? 'Subtítulo (opcional)' : 'Segunda linha (opcional)'}">` : ''}
+    <input type="text" id="mxT" value="${esc(t.fx === 'grafico' && t.items ? t.items.map(x => x.text).join(' | ') : t.text || '')}" placeholder="${t.fx === 'mural' ? 'Etiquetas separadas por |' : t.fx === 'contador' ? 'Número (ex.: R$ 176 MI, 30%, 1.500)' : t.fx === 'grafico' ? 'Valores separados por | (ex.: 10 | 25 | 40)' : 'Texto'}">
+    ${hasSub ? `<input type="text" id="mxS" value="${esc(t.sub || '')}" placeholder="${t.fx === 'titulo' ? 'Subtítulo (opcional)' : t.fx === 'contador' || t.fx === 'grafico' ? 'Rótulo (ex.: moradores, investimento)' : 'Segunda linha (opcional)'}">` : ''}
     ${t.fx === 'titulo' ? `<div class="row"><label class="fld grow">Número<input type="number" id="mxN" min="1" max="99" value="${t.n || 1}"></label><label class="fld grow">De<input type="number" id="mxNN" min="1" max="99" value="${t.N || 1}"></label></div>` : ''}
     ${t.fx !== 'titulo' && t.fx !== 'cam' ? '<p class="note">Dica: arraste o efeito no vídeo para mudar a altura.</p>' : ''}
     <p class="note" id="mxI"></p>
@@ -718,7 +732,7 @@ function openMotion(id) {
     <button class="btn danger wide" id="mxDel">Excluir efeito</button>`, b => {
     const info = () => b.querySelector('#mxI').textContent = `Aparece de ${fmtT(t.t0)} até ${fmtT(Math.min(t.t1, total))}`; info();
     const iT = b.querySelector('#mxT'), iS = b.querySelector('#mxS');
-    iT.oninput = () => { t.text = iT.value; if (t.fx === 'mural') t.items = null; dirty = true; }; iT.onchange = () => commit();
+    iT.oninput = () => { t.text = iT.value; if (t.fx === 'mural' || t.fx === 'grafico') t.items = null; dirty = true; }; iT.onchange = () => commit();
     if (iS) { iS.oninput = () => { t.sub = iS.value; dirty = true; }; iS.onchange = () => commit(); }
     on(b, '#mxN', 'change', el => { t.n = +el.value || 1; commit(); });
     on(b, '#mxNN', 'change', el => { t.N = +el.value || 1; commit(); });
@@ -727,6 +741,128 @@ function openMotion(id) {
     b.querySelector('#mxBack').onclick = () => { selText = null; openMotion(); };
     b.querySelector('#mxDel').onclick = () => { S.texts = S.texts.filter(x => x !== t); selText = null; commit(); closeSheet(); };
   });
+}
+
+/* ---------- números falados → contador e gráfico ---------- */
+const NUM_WORDS = { dois: 2, duas: 2, três: 3, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, quinze: 15, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90, cem: 100, cento: 100, duzentos: 200, trezentos: 300, quinhentos: 500 };
+const fmtNum = (v, dec) => v.toLocaleString('pt-BR', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+function parseShown(s) {           // "R$ 176,5 MI" → { pre: 'R$ ', v: 176.5, dec: 1, suf: ' MI' }
+  const m = String(s || '').match(/^(.*?)(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?(.*)$/);
+  if (!m) return null;
+  return { pre: m[1], v: parseFloat(m[2].replace(/\./g, '') + (m[3] ? '.' + m[3] : '')), dec: m[3] ? m[3].length : 0, suf: m[4] };
+}
+/* acha números na fala: dígitos (176, 1.500, 2,5, 30%) e alguns por extenso, com "mil/milhões", "%", "R$/reais" */
+function spokenNumbers() {
+  const out = [];
+  for (let i = 0; i < visW.length; i++) {
+    const raw = visW[i].text, w = clean(raw), lw = w.toLowerCase();
+    let v = null, dec = 0, pre = '', suf = '', used = 1;
+    const dm = raw.match(/(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?/);
+    if (dm) { v = parseFloat(dm[1].replace(/\./g, '') + (dm[2] ? '.' + dm[2] : '')); dec = dm[2] ? dm[2].length : 0; if (/%/.test(raw)) suf = '%'; if (/R\$/.test(raw)) pre = 'R$ '; }
+    else if (NUM_WORDS[lw] && i + 1 < visW.length && /^(mil|milh|bilh|por|reais|anos|pessoas|casas|famílias|vezes|dias|meses|metros|quilômetros|km)/i.test(clean(visW[i + 1].text))) v = NUM_WORDS[lw];
+    if (v == null || !isFinite(v)) continue;
+    const year = !pre && !suf && !dec && v >= 1900 && v <= 2100 && !/\./.test(raw);
+    const prev = i ? clean(visW[i - 1].text) : '';
+    if (/^R\$$/i.test(visW[i - 1] ? visW[i - 1].text.trim() : '') || /^R\$/.test(prev)) pre = 'R$ ';
+    for (let j = i + 1; j < Math.min(visW.length, i + 4); j++) {
+      const n = clean(visW[j].text).toLowerCase();
+      if (/^mil$/.test(n)) { suf = ' MIL' + suf; used = j - i + 1; }
+      else if (/^milh/.test(n)) { suf = ' MI' + suf; used = j - i + 1; }
+      else if (/^bilh/.test(n)) { suf = ' BI' + suf; used = j - i + 1; }
+      else if (n === 'por' && visW[j + 1] && /^cento/i.test(clean(visW[j + 1].text))) { suf += '%'; used = j - i + 2; break; }
+      else if (/^reais/.test(n)) { pre = 'R$ '; used = j - i + 1; break; }
+      else if (n === 'de' && /^reais/i.test(clean((visW[j + 1] || {}).text || ''))) { pre = 'R$ '; used = j - i + 2; break; }
+      else break;
+    }
+    const ctx2 = []; for (const x of visW.slice(i + used, i + used + 4)) { const c2 = clean(x.text); if (!c2 || /\d/.test(c2)) break; if (!STOP.has(c2.toLowerCase())) ctx2.push(c2); if (ctx2.length === 2 || /[.,;:!?]$/.test(x.text)) break; }
+    out.push({ v, dec, pre, suf, year, o0: visW[i].o0, o1: visW[i + used - 1].o1, label: ctx2.join(' '), shown: year ? String(v) : pre + fmtNum(v, dec) + suf });
+    i += used - 1;
+  }
+  return out;
+}
+/* agrupa números próximos: 2 ou mais em ~8 s viram gráfico; sozinho vira contador */
+function autoNumbers() {
+  // ano seguido de um valor ("em 2022 eram 300") vira um par: rótulo = ano, valor = número
+  const raw = spokenNumbers().filter(n => !(n.v < 2 && !n.suf && !n.pre)), N = [];
+  for (let i = 0; i < raw.length; i++) {
+    const n = raw[i], nx = raw[i + 1];
+    if (n.year && nx && !nx.year && nx.o0 - n.o1 < 1.6) { N.push({ ...nx, tag: n.shown, o0: n.o0 }); i++; }
+    else if (!n.year) N.push(n);
+  }
+  if (!N.length) return 0;
+  const unit = n => n.pre + n.suf;
+  const add = t => S.texts.push({ id: 'f' + Math.random().toString(36).slice(2, 9), kind: 'fx', x: 0.5, ...t });
+  let made = 0;
+  for (let i = 0; i < N.length;) {
+    let j = i + 1;
+    while (j < N.length && j - i < 5 && N[j].o0 - N[j - 1].o1 < 6 && unit(N[j]) === unit(N[i])) {
+      const a2 = !!N[j - 1].tag, b2 = !!N[j].tag;
+      if (a2 !== b2 && !(a2 && N[j].o0 - N[j - 1].o1 < 3)) break;    // não mistura série de anos com número solto
+      if (a2 && !b2) { const pw = visW.find(v => v.o1 <= N[j].o0 && v.o1 > N[j].o0 - 1.2 && /^(hoje|agora|atualmente)$/i.test(clean(v.text))); N[j].tag = pw ? clean(pw.text).toUpperCase() : N[j].shown; }
+      j++;
+    }
+    const grp = N.slice(i, j), t0 = grp[0].o0 - 0.15, last = grp[grp.length - 1];
+    // números ganham prioridade: tira efeitos de texto que coincidem
+    S.texts = S.texts.filter(t => !(t.kind === 'fx' && ['doodle', 'mural', 'vidro', 'anel'].includes(t.fx) && t.t0 < last.o1 + 2.5 && t.t1 > t0));
+    if (grp.length >= 2) add({ fx: 'grafico', t0, t1: Math.min(total, last.o1 + 3), y: 0.68, text: last.shown, sub: last.label || grp[0].label,
+      items: grp.map(n => ({ text: n.tag || n.shown, val: n.shown, v: n.v, o: n.o0 })) });
+    else add({ fx: 'contador', t0, t1: Math.min(total, last.o1 + 2.6), y: 0.68, text: last.shown, sub: last.label });
+    made++; i = j;
+  }
+  // um número não fica por cima do outro
+  const nf = S.texts.filter(t => t.kind === 'fx' && (t.fx === 'contador' || t.fx === 'grafico')).sort((p2, q2) => p2.t0 - q2.t0);
+  for (let i = 0; i < nf.length - 1; i++) if (nf[i].t1 > nf[i + 1].t0) nf[i].t1 = Math.max(nf[i].t0 + 1, nf[i + 1].t0);
+  return made;
+}
+function drawCounter(c, W, H, o, t, k, a) {
+  const P = parseShown(t.text) || { pre: '', v: 0, dec: 0, suf: t.text || '' };
+  const d = o - t.t0, p = easeOut(d / 1.3), pop = easeBack(d / 0.4), y = t.y * H;
+  const cur = P.pre + fmtNum(P.v * p, p < 1 ? (P.v >= 100 ? 0 : P.dec) : P.dec) + P.suf;
+  // cantos de mira na tela
+  c.globalAlpha = a * 0.9; c.strokeStyle = MX.red; c.lineWidth = 6 * k; c.lineCap = 'round';
+  const m = 70 * k + (1 - pop) * 40 * k, L = 70 * k;
+  for (const [x, y2, dx, dy] of [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]]) { c.beginPath(); c.moveTo(x, y2 + dy * L); c.lineTo(x, y2); c.lineTo(x + dx * L, y2); c.stroke(); }
+  c.globalAlpha = a;
+  c.save(); c.translate(W / 2, y); const sc = 0.85 + 0.15 * pop; c.scale(sc, sc);
+  const f = fitFont(c, P.pre + fmtNum(P.v, P.dec) + P.suf, 900, 150 * k, 820 * k), bw = Math.max(c.measureText(P.pre + fmtNum(P.v, P.dec) + P.suf).width + 120 * k, 520 * k), bh = f * 1.25 + (t.sub ? 70 * k : 30 * k);
+  c.fillStyle = 'rgba(30,24,23,.93)'; c.shadowColor = MX.red; c.shadowBlur = 40 * k; rr(c, -bw / 2, -bh / 2, bw, bh, 28 * k); c.fill(); c.shadowBlur = 0;
+  c.strokeStyle = MX.red; c.lineWidth = 4 * k; rr(c, -bw / 2, -bh / 2, bw, bh, 28 * k); c.stroke();
+  if (t.sub) { c.font = `700 ${30 * k}px ui-monospace, monospace`; c.fillStyle = MX.red; if ('letterSpacing' in c) c.letterSpacing = `${5 * k}px`; c.fillText(t.sub.toUpperCase(), 0, -bh / 2 + 52 * k); if ('letterSpacing' in c) c.letterSpacing = '0px'; }
+  c.font = `900 ${f}px ${SANS}`; c.fillStyle = MX.white; c.shadowColor = 'rgba(255,74,58,.55)'; c.shadowBlur = 24 * k;
+  c.fillText(cur, 0, (t.sub ? 34 * k : 0) + f * 0.36);
+  c.restore();
+  return [W / 2 - bw / 2, y - bh / 2, bw, bh];
+}
+function drawChart(c, W, H, o, t, k, a) {
+  let items = t.items && t.items.length ? t.items : String(t.text || '').split('|').map(x => ({ text: x.trim() })).filter(x => x.text);
+  items = items.slice(0, 5).map((it, i) => ({ ...it, v: it.v != null ? it.v : (parseShown(it.text) || { v: i + 1 }).v, o: it.o != null ? it.o : t.t0 + 0.3 + i * 0.45 }));
+  if (!items.length) return null;
+  const years = items.every(it => !it.val && it.v >= 1900 && it.v <= 2100 && !/[%$]/.test(it.text));
+  const max = Math.max(...items.map(it => Math.abs(it.v))) || 1;
+  const cw = 880 * k, ch = 440 * k, x0 = (W - cw) / 2, y0 = t.y * H - ch / 2, d = o - t.t0, pop = easeBack(d / 0.4);
+  c.save(); c.globalAlpha = a; c.translate(W / 2, t.y * H); const sc = 0.9 + 0.1 * pop; c.scale(sc, sc); c.translate(-W / 2, -t.y * H);
+  c.fillStyle = 'rgba(30,24,23,.93)'; c.shadowColor = 'rgba(255,74,58,.5)'; c.shadowBlur = 36 * k; rr(c, x0, y0, cw, ch, 30 * k); c.fill(); c.shadowBlur = 0;
+  c.strokeStyle = 'rgba(255,74,58,.6)'; c.lineWidth = 3 * k; rr(c, x0, y0, cw, ch, 30 * k); c.stroke();
+  // número grande: o último já dito
+  let lastIdx = 0; items.forEach((it, i) => { if (o >= it.o) lastIdx = i; });
+  const big = items[lastIdx], bigT = big.val || big.text, P = parseShown(bigT), bp = easeOut((o - big.o) / 0.9);
+  c.textAlign = 'left'; c.font = `900 ${84 * k}px ${SANS}`; c.fillStyle = MX.white;
+  c.fillText(P && !years ? P.pre + fmtNum(P.v * clamp(bp, 0, 1), bp < 1 && P.v >= 100 ? 0 : P.dec) + P.suf : bigT, x0 + 44 * k, y0 + 108 * k);
+  if (t.sub) { c.font = `700 ${28 * k}px ui-monospace, monospace`; c.fillStyle = MX.red; if ('letterSpacing' in c) c.letterSpacing = `${4 * k}px`; c.fillText(t.sub.toUpperCase(), x0 + 46 * k, y0 + 156 * k); if ('letterSpacing' in c) c.letterSpacing = '0px'; }
+  // barras crescendo quando cada número é dito (anos = etapas, não valores)
+  const n = items.length, gap = 28 * k, bx0 = x0 + 44 * k, bwid = (cw - 88 * k - gap * (n - 1)) / n, base = y0 + ch - 70 * k, hmax = ch - 250 * k;
+  items.forEach((it, i) => {
+    const g2 = easeBack((o - it.o) / 0.6); if (o < it.o) return;
+    const hgt = (years ? (i + 1) / n : Math.max(0.08, Math.abs(it.v) / max)) * hmax * clamp(g2, 0, 1.08);
+    const x = bx0 + i * (bwid + gap), gr = c.createLinearGradient(0, base - hgt, 0, base);
+    gr.addColorStop(0, MX.salmon); gr.addColorStop(1, MX.red2);
+    c.fillStyle = gr; rr(c, x, base - hgt, bwid, hgt, 10 * k); c.fill();
+    c.font = `700 ${Math.min(30 * k, bwid / 4)}px ui-monospace, monospace`; c.fillStyle = MX.gray; c.textAlign = 'center';
+    c.fillText(it.text, x + bwid / 2, base + 44 * k);
+    if (it.val && g2 > 0.6) { c.fillStyle = MX.white; c.font = `800 ${Math.min(30 * k, bwid / 3.5)}px ${SANS}`; c.fillText(it.val, x + bwid / 2, base - hgt - 14 * k); }
+  });
+  c.restore();
+  return [x0, y0, cw, ch];
 }
 
 /* ---------- molduras ---------- */
