@@ -38,6 +38,7 @@ const ICON = {
   zoom: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.5-4.5M11 8v6M8 11h6"/></svg>',
   dividir: '<svg viewBox="0 0 24 24"><path d="M12 3v18M8 7H4v10h4M16 7h4v10h-4"/></svg>',
   moldura: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>',
+  ia: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M12 7.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z" fill="currentColor"/></svg>',
   imagem: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>',
   motion: '<svg viewBox="0 0 24 24"><path d="M4 17c3-8 6-8 8-4s5 4 8-4"/><circle cx="19" cy="6" r="1.6" fill="currentColor"/><path d="M3 21h18"/></svg>',
   tarja: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14h12l2 3H3z" fill="currentColor"/><path d="M6 11h7"/></svg>',
@@ -46,7 +47,7 @@ const ICON = {
 };
 
 const TOOLS = [
-  ['limpo', 'Corte limpo'], ['legendas', 'Legendas'], ['motion', 'Motion'], ['imagem', 'Imagem'], ['moldura', 'Moldura'], ['tarja', 'Tarjas'], ['texto', 'Texto'],
+  ['ia', 'IA'], ['limpo', 'Corte limpo'], ['legendas', 'Legendas'], ['motion', 'Motion'], ['imagem', 'Imagem'], ['moldura', 'Moldura'], ['tarja', 'Tarjas'], ['texto', 'Texto'],
   ['trans', 'Transições'], ['marca', 'Marca'], ['zoom', 'Zoom'], ['pausas', 'Pausas'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
 ];
 const FORMATS = { orig: ['Original', 0], '9:16': ['9:16 Reels', 9 / 16], '4:5': ['4:5 Feed', 4 / 5], '1:1': ['1:1', 1], '16:9': ['16:9', 16 / 9] };
@@ -1073,6 +1074,183 @@ function tiltLayout(W, H, o) {
     ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillText(tg, xx + 24 * k, yy + 30 * k);
   });
   ctx.restore();
+}
+
+/* ---------- IA: editar por comandos (Claude) ---------- */
+const AI_MODELS = { 'claude-sonnet-5-5': 'Sonnet (equilibrado)', 'claude-haiku-5-5': 'Haiku (mais rápido e barato)', 'claude-opus-5-5': 'Opus (mais caprichado)' };
+let aiHist = [];          // conversa desta edição (para pedidos como "muda a cor")
+const r2 = v => Math.round(v * 10) / 10;
+function aiContext() {
+  const tr = visW.length ? visW.map((v, i) => `${i}@${r2(v.o0)} ${v.text}`).join(' ') : '(sem transcrição: as legendas ainda não foram geradas)';
+  const items = S.texts.map(t => ({ id: t.id, tipo: t.kind === 'fx' ? 'efeito:' + t.fx : t.kind === 'lt' ? 'tarja' : t.kind === 'img' ? 'imagem:' + t.mode : 'texto', texto: t.text, linha2: t.sub, inicio: r2(t.t0), fim: r2(Math.min(t.t1, total)) }));
+  return `DURAÇÃO DO VÍDEO EDITADO: ${r2(total)} s
+ESTADO ATUAL: ${JSON.stringify({ legendas: S.caps.on ? { estilo: S.caps.style, altura: S.caps.y, cor: S.caps.color } : 'desligadas', moldura: S.frame.on ? { estilo: S.frame.style, cor: S.frame.color, texto: S.frame.text, selo: S.frame.tag } : 'desligada', zoom: S.zoom.on, marca: cfg.logo.on ? cfg.logo.pos : 'desligada', cortes: S.segs.length, itens: items })}
+TRANSCRIÇÃO (índice@segundo palavra): ${tr}`;
+}
+const AI_SYS = `Você é o editor de vídeo do app CortaJá (vídeos verticais de fala, TV Huntter News, criado por Fabio Huntter). O usuário pede mudanças em português e você responde chamando a ferramenta "editar" com a lista de ações e uma resposta curta em português do Brasil.
+Regras:
+- Tempos em segundos do vídeo editado (os da transcrição). Coloque cada elemento no momento em que o assunto é falado.
+- Textos de efeitos, títulos, números e tarjas devem vir da fala; não invente fatos, números ou nomes que não foram ditos ou dados pelo usuário.
+- Para mexer num item que já existe, use "remover" com o id e crie de novo, ou use "alterar" com o id.
+- Se o pedido não puder ser feito com as ações disponíveis, explique na resposta e não invente ação.
+- Sem transcrição, você ainda pode aplicar moldura, marca, zoom, transições e itens com texto que o usuário der.
+Cores aceitas: qualquer #rrggbb.`;
+const AI_TOOL = {
+  name: 'editar',
+  description: 'Aplica edições no vídeo aberto no CortaJá.',
+  input_schema: {
+    type: 'object', required: ['acoes', 'resposta'],
+    properties: {
+      resposta: { type: 'string', description: 'Mensagem curta para o usuário dizendo o que foi feito.' },
+      acoes: {
+        type: 'array', items: {
+          type: 'object', required: ['tipo'],
+          properties: {
+            tipo: { type: 'string', enum: ['legendas', 'corrigir_palavras', 'moldura', 'tarja', 'texto', 'efeito', 'transicoes', 'zoom', 'marca', 'alterar', 'remover', 'estilo_noticia_auto', 'numeros_auto', 'corte_limpo'] },
+            ligar: { type: 'boolean', description: 'legendas/moldura/zoom/marca: ligar ou desligar' },
+            estilo: { type: 'string', description: 'legendas: karaoke|marcador|impacto|elegante|classica. moldura: jornal|social|vlog|criativo|neon|cinema|polaroid. transicoes: auto|nenhuma|punch|zoom|zoomout|whip|whipv|spin|shake|glitch|blur|flash|fade. texto: faixa|limpo|contorno. tarja (modelo): barra|duas|jornal|pilula|linha|caixa' },
+            efeito: { type: 'string', enum: ['titulo', 'doodle', 'mural', 'vidro', 'anel', 'cam', 'contador', 'grafico', 'cta', 'lista', 'tilt'], description: 'titulo=título numerado no topo; doodle=palavra rabiscada; mural=até 4 etiquetas (texto separado por |); vidro=texto 3D; anel=zoom com anel + frase; cam=vídeo em card CAM 01; contador=número subindo (ex.: "R$ 176 MI", "35%"); grafico=barras (texto "10 | 25 | 40"); cta=card de chamada com botão/cronômetro; lista=card com itens marcados (itens em linha2 separados por |); tilt=vídeo 3D inclinado com etiquetas (texto separado por |)' },
+            texto: { type: 'string' }, linha2: { type: 'string', description: 'subtítulo / segunda linha / itens da lista / rótulo do contador' },
+            inicio: { type: 'number' }, fim: { type: 'number' },
+            cor: { type: 'string' }, cor2: { type: 'string', description: 'tarja: cor do fundo' },
+            posicao: { type: 'string', description: 'tarja: be|bc|bd|ce|cd|le|ld (embaixo esq/centro/dir, em cima esq/dir, lado esq/dir). marca: tl|tr. legendas: em_cima|meio|embaixo' },
+            altura: { type: 'number', description: '0 a 1, posição vertical (0 topo, 1 base) para texto/efeito/legendas' },
+            selo: { type: 'string', description: 'moldura jornal: selo (ex. URGENTE); cta: selo de cima' },
+            botao: { type: 'string' }, aviso: { type: 'string' }, cronometro_min: { type: 'number' },
+            numero: { type: 'integer' }, total: { type: 'integer' },
+            id: { type: 'string', description: 'alterar/remover: id do item' },
+            alvo: { type: 'string', enum: ['efeitos', 'tarjas', 'textos', 'imagens', 'tudo'], description: 'remover em lote' },
+            correcoes: { type: 'array', items: { type: 'object', required: ['indice', 'texto'], properties: { indice: { type: 'integer' }, texto: { type: 'string', description: 'novo texto da palavra; vazio para esconder' } } } },
+          },
+        },
+      },
+    },
+  },
+};
+async function aiCall(pedido) {
+  const key = cfg.aiKey; if (!key) throw new Error('sem chave');
+  const msgs = [...aiHist.slice(-6), { role: 'user', content: aiContext() + '\n\nPEDIDO: ' + pedido }];
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: cfg.aiModel || 'claude-sonnet-5-5', max_tokens: 4000, system: AI_SYS, tools: [AI_TOOL], tool_choice: { type: 'tool', name: 'editar' }, messages: msgs }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const m = (j.error && j.error.message) || r.statusText;
+    if (r.status === 401) throw new Error('A chave de API não foi aceita. Confira se copiou inteira.');
+    if (r.status === 429) throw new Error('Muitos pedidos seguidos ou limite da conta atingido. Espere um pouco.');
+    if (/credit|balance|billing/i.test(m)) throw new Error('A conta da API está sem créditos. Adicione créditos no site da Anthropic.');
+    throw new Error(m);
+  }
+  const tu = (j.content || []).find(b => b.type === 'tool_use');
+  if (!tu) throw new Error('A IA não devolveu edições.');
+  aiHist.push({ role: 'user', content: 'PEDIDO: ' + pedido }, { role: 'assistant', content: tu.input.resposta || 'Feito.' });
+  return tu.input;
+}
+const clampT = v => clamp(+v || 0, 0, total);
+async function aiApply(res) {
+  const acts = res.acoes || [], feitos = [];
+  const tm = (a, def) => { const t0 = clampT(a.inicio != null ? a.inicio : curOut); return [t0, Math.max(t0 + 0.3, clampT(a.fim != null ? a.fim : t0 + def))]; };
+  for (const a of acts) {
+    try {
+      if (a.tipo === 'legendas') {
+        if (a.ligar === false) S.caps.on = false;
+        else { if (!S.words) { feitos.push('legendas: precisa gerar a transcrição primeiro (Legendas → Gerar)'); continue; } S.caps.on = true; }
+        if (a.estilo && CAPSTYLES[a.estilo]) S.caps.style = a.estilo;
+        if (a.cor) S.caps.color = a.cor;
+        if (a.posicao) S.caps.y = { em_cima: 0.16, meio: 0.5, embaixo: 0.84 }[a.posicao] || S.caps.y;
+        if (a.altura != null) S.caps.y = clamp(+a.altura, 0.08, 0.94);
+      } else if (a.tipo === 'corrigir_palavras') {
+        let n = 0; for (const c2 of a.correcoes || []) { const v = visW[c2.indice]; if (v) { if (c2.texto) v.w.text = c2.texto; else v.w.hide = true; n++; } }
+        feitos.push(`${n} palavra(s) corrigida(s)`);
+      } else if (a.tipo === 'moldura') {
+        if (a.ligar === false) S.frame.on = false;
+        else { S.frame.on = true; if (a.estilo && FRAMES[a.estilo]) S.frame.style = a.estilo; if (a.cor) S.frame.color = a.cor; if (a.texto != null) S.frame.text = a.texto; if (a.selo) S.frame.tag = a.selo; }
+      } else if (a.tipo === 'tarja') {
+        const [t0, t1] = tm(a, 5), P = LT_POS[a.posicao] || LT_POS[cfg.ltPos || 'be'];
+        S.texts.push({ id: 'l' + Date.now() + Math.random().toString(36).slice(2, 5), kind: 'lt', text: a.texto || '', sub: a.linha2 || '', t0, t1, shape: LT_SHAPES[a.estilo] ? a.estilo : (cfg.ltShape || 'barra'), c1: a.cor || cfg.ltC1 || '#ff5a36', c2: a.cor2 || cfg.ltC2 || '#111111', size: 1, x: P[1], y: P[2], align: P[3] });
+      } else if (a.tipo === 'texto') {
+        const [t0, t1] = tm(a, 3);
+        S.texts.push({ id: 't' + Date.now() + Math.random().toString(36).slice(2, 5), text: a.texto || '', t0, t1, x: 0.5, y: a.altura != null ? clamp(+a.altura, 0.05, 0.95) : 0.18, size: 64, style: ['faixa', 'limpo', 'contorno'].includes(a.estilo) ? a.estilo : 'faixa', color: a.cor || '#ff5a36' });
+      } else if (a.tipo === 'efeito') {
+        const fx = a.efeito; if (!FXS[fx]) continue;
+        const [t0, t1] = tm(a, { cam: 5, titulo: 3.2, mural: 3.5, cta: 5, lista: 4.5, tilt: 4, grafico: 4, contador: 3 }[fx] || 2.2);
+        const t = { id: 'f' + Date.now() + Math.random().toString(36).slice(2, 5), kind: 'fx', fx, x: 0.5, t0, t1, text: a.texto || '', sub: a.linha2 || '', n: a.numero || 1, N: a.total || 1,
+          y: a.altura != null ? clamp(+a.altura, 0.05, 0.95) : ({ titulo: 0.1, mural: 0.62, vidro: 0.7, anel: 0.68, doodle: 0.66, cam: 0.5, contador: 0.68, grafico: 0.68, cta: 0.8, lista: 0.78 }[fx] || 0.6) };
+        if (fx === 'cta') Object.assign(t, { chip: a.selo || '', btn: a.botao || 'Saiba Mais', badge: a.aviso || '', timer: Math.max(0, +a.cronometro_min || 0) * 60, timerLbl: 'Restam', text: a.texto || 'Aula gratuita' });
+        if (['cta', 'lista', 'tilt'].includes(fx)) t.c1 = a.cor || cfg.ctaColor || OR;
+        if (fx === 'cam' && !t.text) t.text = 'CAM · 01';
+        S.texts.push(t);
+      } else if (a.tipo === 'transicoes') {
+        if (a.estilo === 'auto') autoTransitions();
+        else S.segs.forEach((g, i) => { if (i) g.tr = a.estilo === 'nenhuma' ? '' : (TRANS[a.estilo] != null ? a.estilo : g.tr); });
+      } else if (a.tipo === 'zoom') S.zoom.on = a.ligar !== false;
+      else if (a.tipo === 'marca') { cfg.logo.on = a.ligar !== false; if (a.posicao === 'tl' || a.posicao === 'tr') cfg.logo.pos = a.posicao; saveCfg(); }
+      else if (a.tipo === 'alterar') {
+        const t = S.texts.find(x => x.id === a.id); if (!t) continue;
+        if (a.texto != null) { t.text = a.texto; if (t.items) t.items = null; }
+        if (a.linha2 != null) t.sub = a.linha2;
+        if (a.inicio != null) t.t0 = clampT(a.inicio); if (a.fim != null) t.t1 = Math.max(t.t0 + 0.3, clampT(a.fim));
+        if (a.cor) { if (t.kind === 'lt' || t.kind === 'img' || ['cta', 'lista', 'tilt'].includes(t.fx)) t.c1 = a.cor; else t.color = a.cor; }
+        if (a.cor2 && t.kind === 'lt') t.c2 = a.cor2;
+        if (a.estilo && t.kind === 'lt' && LT_SHAPES[a.estilo]) t.shape = a.estilo;
+        if (a.posicao && t.kind === 'lt' && LT_POS[a.posicao]) { const P = LT_POS[a.posicao]; t.x = P[1]; t.y = P[2]; t.align = P[3]; }
+        if (a.altura != null) t.y = clamp(+a.altura, 0.05, 0.95);
+        if (a.selo != null) t.chip = a.selo; if (a.botao != null) t.btn = a.botao; if (a.aviso != null) t.badge = a.aviso;
+        if (a.cronometro_min != null) t.timer = Math.max(0, +a.cronometro_min) * 60;
+      } else if (a.tipo === 'remover') {
+        if (a.id) S.texts = S.texts.filter(x => x.id !== a.id);
+        else if (a.alvo) { const k2 = { efeitos: 'fx', tarjas: 'lt', imagens: 'img' }[a.alvo]; S.texts = a.alvo === 'tudo' ? [] : S.texts.filter(x => a.alvo === 'textos' ? x.kind : x.kind !== k2); }
+      } else if (a.tipo === 'estilo_noticia_auto') { if (!autoMotion()) feitos.push('estilo notícia: precisa da transcrição'); }
+      else if (a.tipo === 'numeros_auto') { S.texts = S.texts.filter(x => !(x.kind === 'fx' && (x.fx === 'contador' || x.fx === 'grafico'))); autoNumbers(); }
+      else if (a.tipo === 'corte_limpo') { const r3 = await cleanCut(); if (r3) recalc(); }
+    } catch (e) { console.warn('ação da IA falhou', a, e); }
+  }
+  selText = null; commit(); dirty = true; seekOut(Math.min(curOut, total));
+  return feitos;
+}
+function openAI() {
+  pause();
+  if (!cfg.aiKey) return openAIKey();
+  const log = aiHist.filter(m => m.role === 'assistant').length ? aiHist.slice(-8).map(m => `<p class="${m.role === 'user' ? 'aiU' : 'aiA'}">${esc(String(m.content).replace(/^PEDIDO: /, ''))}</p>`).join('') : '';
+  sheet('Pedir para a IA', `<div id="aiLog">${log || `<p class="note">Escreva o que quer no vídeo. Exemplos:</p>
+      <div class="row">${['Coloca moldura jornalística e uma tarja com meu nome no começo', 'Corrige os erros das legendas', 'Contador quando eu falar de dinheiro', 'Card de chamada no final com cronômetro de 10 minutos'].map(x => `<button class="chip" data-ex="${esc(x)}">${esc(x)}</button>`).join('')}</div>`}</div>
+    <textarea id="aiQ" rows="3" placeholder="Ex.: coloca legendas amarelas embaixo e um título em cada assunto"></textarea>
+    <button class="btn wide" id="aiGo">Enviar para a IA</button>
+    ${S.words ? '' : '<p class="note">Dica: gere as legendas antes. Com a transcrição a IA sabe o que você falou e em que momento.</p>'}
+    <p class="note">Só o texto da fala e o seu pedido vão para a IA; o vídeo fica no celular. Desfaça com ↶ se não gostar.</p>
+    <div class="row"><button class="chip" id="aiCfg">Chave e modelo</button>${aiHist.length ? '<button class="chip" id="aiNew">Nova conversa</button>' : ''}</div>`, b => {
+    const q = b.querySelector('#aiQ');
+    on(b, '[data-ex]', 'click', el => { q.value = el.dataset.ex; q.focus(); });
+    b.querySelector('#aiCfg').onclick = openAIKey;
+    const nw = b.querySelector('#aiNew'); if (nw) nw.onclick = () => { aiHist = []; openAI(); };
+    b.querySelector('#aiGo').onclick = async () => {
+      const pedido = q.value.trim(); if (!pedido) return q.focus();
+      busy('A IA está editando…', 'Lendo a sua fala e montando as edições');
+      try {
+        const res = await within(aiCall(pedido), 90000);
+        const avisos = await aiApply(res);
+        idle(); openAI();
+        toast((res.resposta || 'Feito.') + (avisos.length ? ' (' + avisos.join('; ') + ')' : ''), 6000);
+      } catch (e) {
+        idle();
+        const m = String(e && e.message || e);
+        toast(m === 'travou' ? 'A IA demorou demais para responder. Tente de novo.' : /Failed to fetch|NetworkError|network/i.test(m) ? 'Sem internet ou a API não respondeu.' : 'IA: ' + m, 7000);
+      }
+    };
+  });
+}
+function openAIKey() {
+  sheet('IA: chave e modelo', `<p>Para a IA editar, o app precisa de uma <b>chave de API do Claude</b> (Anthropic). Ela fica guardada só neste celular.</p>
+    <p class="note">Crie em console.anthropic.com → API Keys. O uso é cobrado pela Anthropic conforme a quantidade de texto.</p>
+    <input type="password" id="akK" placeholder="sk-ant-..." value="${esc(cfg.aiKey || '')}" autocomplete="off">
+    <label class="fld">Modelo<select id="akM">${Object.entries(AI_MODELS).map(([k2, v]) => `<option value="${k2}"${(cfg.aiModel || 'claude-sonnet-5-5') === k2 ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+    <button class="btn wide" id="akOk">Salvar</button>
+    ${cfg.aiKey ? '<button class="btn danger wide" id="akDel">Apagar a chave deste celular</button>' : ''}`, b => {
+    b.querySelector('#akOk').onclick = () => { const k2 = b.querySelector('#akK').value.trim(); if (!/^sk-ant-/.test(k2)) return toast('A chave do Claude começa com "sk-ant-".'); cfg.aiKey = k2; cfg.aiModel = b.querySelector('#akM').value; saveCfg(); toast('Chave salva.'); openAI(); };
+    const del = b.querySelector('#akDel'); if (del) del.onclick = () => { delete cfg.aiKey; saveCfg(); toast('Chave apagada.'); closeSheet(); };
+  });
 }
 
 /* ---------- molduras ---------- */
@@ -2105,7 +2283,7 @@ async function loadInner(raw, proj) {
   if (!isFinite(S.dur) || !S.vw) { idle(); return toast('Este arquivo não tem vídeo legível.', 5000); }
   S.segs = [{ s: 0, e: S.dur, tr: '' }]; S.words = null; S.texts = []; S.caps.on = false; S.zoom.on = false; S.fmt = 'orig';
   S.frame = { on: false, style: cfg.frStyle || 'jornal', color: cfg.frColor || '#e11d2a', text: '', tag: 'URGENTE' };
-  hist = []; hi = -1; sel = -1; curSeg = 0; curOut = 0; thumbs = []; thumbN = 0; playing = false;
+  hist = []; hi = -1; sel = -1; curSeg = 0; curOut = 0; thumbs = []; thumbN = 0; playing = false; aiHist = [];
   let pos = 0;
   if (proj) {
     if (Math.abs(proj.dur - S.dur) > 0.25) toast('Esse vídeo é diferente do salvo; comecei uma edição nova.', 5000);
@@ -2123,7 +2301,7 @@ async function loadInner(raw, proj) {
 $('#bPlay').innerHTML = ICON.play; $('#bUndo').innerHTML = ICON.undo; $('#bRedo').innerHTML = ICON.redo;
 $('#bHome').innerHTML = ICON.home; $('#shClose').innerHTML = ICON.close; $('#bMagic').innerHTML = ICON.magic;
 $('#tools').innerHTML = TOOLS.map(([k, n]) => `<button data-tool="${k}">${ICON[k]}<span>${n}</span></button>`).join('');
-const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, tarja: () => openLT(), moldura: openFrame, motion: () => openMotion(), imagem: () => openImg(), dividir: splitHere, excluir: deleteSeg };
+const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, tarja: () => openLT(), moldura: openFrame, motion: () => openMotion(), imagem: () => openImg(), ia: openAI, dividir: splitHere, excluir: deleteSeg };
 // mostra que a barra de ferramentas desliza para o lado
 function nudgeTools() { const t = $('#tools'); setTimeout(() => { t.scrollTo({ left: 140, behavior: 'smooth' }); setTimeout(() => t.scrollTo({ left: 0, behavior: 'smooth' }), 700); }, 900); }
 $('#tools').addEventListener('scroll', e => e.target.classList.toggle('end', e.target.scrollLeft + e.target.clientWidth >= e.target.scrollWidth - 4), { passive: true });
