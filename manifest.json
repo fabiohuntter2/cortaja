@@ -2,7 +2,7 @@
   "id": "./",
   "name": "CortaJá",
   "short_name": "CortaJá",
-  "description": "Editor de vídeo rápido para celular: corte limpo, legendas automáticas e zoom dinâmico.",
+  "description": "Editor de vídeo rápido para celular: corte limpo, legendas automáticas e zoom dinâmico. Criado por Fabio Huntter.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

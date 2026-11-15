@@ -29,6 +29,8 @@ h1{font-size:34px;font-weight:900;margin:10px 0 4px;letter-spacing:-.5px}
 .feat{list-style:none;padding:0;margin:28px 0 0;text-align:left;display:grid;gap:10px}
 .feat li{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--mut);font-size:13.5px;line-height:1.4}
 .feat b{color:var(--tx)}
+.credit{margin:26px 0 0;color:var(--mut);font-size:13px;letter-spacing:.02em}
+.credit b{color:var(--tx);background:linear-gradient(90deg,#8b5cf6,#22d3a6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 
 /* editor */
 #editor{height:100dvh;display:flex;flex-direction:column;position:relative;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
