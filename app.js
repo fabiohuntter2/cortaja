@@ -118,7 +118,48 @@ function recalc() {
 const snap = () => JSON.stringify(Object.fromEntries(SAVED.map(k => [k, S[k]])));
 function commit() {
   hist.length = hi + 1; hist.push(snap()); if (hist.length > 40) hist.shift();
-  hi = hist.length - 1; recalc();
+  hi = hist.length - 1; recalc(); saveProject();
+}
+/* ---------- projeto salvo (continua de onde parou se o app fechar ou der erro) ---------- */
+const PROJ = 'cortaja-proj';
+let saveT = 0;
+function saveProject() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    if (!S.file || !hist[hi]) return;
+    try { localStorage.setItem(PROJ, JSON.stringify({ v: 1, at: Date.now(), name: S.file.name, opfs: curOpfs, dur: S.dur, pos: curOut, state: hist[hi] })); }
+    catch (e) { console.warn('não salvou', e); }
+  }, 400);
+}
+const savedProject = () => { try { const p = JSON.parse(localStorage.getItem(PROJ) || 'null'); return p && p.v === 1 && p.state ? p : null; } catch (e) { return null; } };
+let resumeState = null;
+async function resumeProject() {
+  const p = savedProject(); if (!p) return;
+  if (p.opfs && navigator.storage && navigator.storage.getDirectory) {
+    try {
+      const fh = await (await navigator.storage.getDirectory()).getFileHandle(p.opfs);
+      const f = await fh.getFile();
+      p._fromStore = true;
+      return loadVideo(new File([f], p.name, { type: f.type || 'video/mp4' }), p);
+    } catch (e) { }
+  }
+  // a cópia não existe mais: pede o mesmo vídeo de novo e aplica a edição salva
+  resumeState = p;
+  sheetHome(`O app precisa do vídeo <b>${esc(p.name)}</b> de novo para continuar. Escolha o mesmo arquivo.`);
+  $('#file').value = ''; $('#file').click();
+}
+function sheetHome(msg) { toast(msg.replace(/<[^>]+>/g, ''), 6000); }
+function showResume() {
+  const p = savedProject(), box = $('#resume');
+  if (!box) return;
+  if (!p) { box.hidden = true; return; }
+  const d = new Date(p.at), quando = d.toLocaleDateString('pt-BR') === new Date().toLocaleDateString('pt-BR') ? 'hoje às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  box.hidden = false;
+  box.innerHTML = `<button class="btn big" id="bResume">Continuar edição</button>
+    <p class="sub" style="margin:8px 0 0">${esc(p.name)} · salva ${quando}</p>
+    <button class="chip" id="bDiscard" style="margin-top:8px">Descartar edição salva</button>`;
+  $('#bResume').onclick = resumeProject;
+  $('#bDiscard').onclick = () => { if (confirm('Apagar a edição salva?')) { localStorage.removeItem(PROJ); showResume(); } };
 }
 function restore(j) {
   if (j < 0 || j >= hist.length) return;
@@ -1264,12 +1305,14 @@ function showResult(blob, ext) {
 /* ---------- abrir vídeo ---------- */
 /* Cópia própria do vídeo: no Android o acesso ao arquivo escolhido pode expirar
    (a prévia fica preta e a exportação dá "network error"). Copiamos para o armazenamento do app. */
+let curOpfs = null;
 async function ownCopy(file) {
+  curOpfs = null;
   try {
     if (!navigator.storage || !navigator.storage.getDirectory) throw 0;
     const dir = await navigator.storage.getDirectory();
     for await (const name of dir.keys()) if (name.startsWith('video-')) { try { await dir.removeEntry(name); } catch (_) { } }
-    const fh = await dir.getFileHandle('video-' + Date.now(), { create: true });
+    const nm = 'video-' + Date.now(), fh = await dir.getFileHandle(nm, { create: true });
     if (!fh.createWritable) throw 0;
     const w = await fh.createWritable(), rd = file.stream().getReader(); let done = 0;
     for (; ;) {
@@ -1278,7 +1321,7 @@ async function ownCopy(file) {
       busy('Preparando o vídeo…', 'Fazendo uma cópia para não perder o acesso ao arquivo', done / file.size);
     }
     await w.close();
-    const f = await fh.getFile();
+    const f = await fh.getFile(); curOpfs = nm;
     return new File([f], file.name, { type: file.type || f.type });
   } catch (e) {
     if (file.size < 250e6) { try { return new File([await file.arrayBuffer()], file.name, { type: file.type }); } catch (_) { } }
@@ -1300,7 +1343,7 @@ async function relinkInner(raw) {
   vids.forEach(v => v.pause()); if (srcUrl) URL.revokeObjectURL(srcUrl); srcUrl = url;
   vids.forEach(v => v.src = url); tv.src = url; S.file = file; prepI = -1; waitSwap = false; act = 0; video = vids[0];
   idle(); seekOut(curOut); dirty = true; thumbs = []; thumbN = 0; makeThumbs();
-  toast('Pronto! Vídeo reconectado, sua edição foi mantida.', 4000);
+  saveProject(); toast('Pronto! Vídeo reconectado, sua edição foi mantida.', 4000);
 }
 const lostFile = m => /network error|notreadable|could not be read|not.?found|permission|interrupted by a call to pause/i.test(m);
 function askRelink() {
@@ -1310,13 +1353,16 @@ function askRelink() {
     b.querySelector('#rlGo').onclick = () => { closeSheet(); relink = true; $('#file').value = ''; $('#file').click(); };
   });
 }
-async function loadVideo(raw) {
+async function loadVideo(raw, proj = null) {
   loadingVid = true;
-  try { await loadInner(raw); } finally { loadingVid = false; }
+  try { await loadInner(raw, proj); } finally { loadingVid = false; }
 }
-async function loadInner(raw) {
+async function loadInner(raw, proj) {
   busy('Abrindo o vídeo…');
-  const file = await ownCopy(raw);
+  if (!proj && resumeState) { proj = resumeState; resumeState = null; }   // vídeo escolhido de novo para continuar
+  let file;
+  if (proj && proj._fromStore) { file = raw; curOpfs = proj.opfs; }   // já é a cópia guardada no app
+  else file = await ownCopy(raw);
   vids.forEach(v => v.pause()); act = 0; video = vids[0]; prepI = -1; waitSwap = false;
   if (srcUrl) URL.revokeObjectURL(srcUrl);
   const url = srcUrl = URL.createObjectURL(file);
@@ -1328,8 +1374,14 @@ async function loadInner(raw) {
   if (!isFinite(S.dur) || !S.vw) { idle(); return toast('Este arquivo não tem vídeo legível.', 5000); }
   S.segs = [{ s: 0, e: S.dur, tr: '' }]; S.words = null; S.texts = []; S.caps.on = false; S.zoom.on = false; S.fmt = 'orig';
   hist = []; hi = -1; sel = -1; curSeg = 0; curOut = 0; thumbs = []; thumbN = 0; playing = false;
+  let pos = 0;
+  if (proj) {
+    if (Math.abs(proj.dur - S.dur) > 0.25) toast('Esse vídeo é diferente do salvo; comecei uma edição nova.', 5000);
+    else { try { Object.assign(S, JSON.parse(proj.state)); pos = proj.pos || 0; } catch (e) { } }
+  }
   $('#home').hidden = true; $('#editor').hidden = false; closeSheet();
-  commit(); seekOut(0); idle();
+  commit(); seekOut(Math.min(pos, total)); idle();
+  if (proj && Math.abs(proj.dur - S.dur) <= 0.25) toast('Edição recuperada. Continue de onde parou.', 3500);
   try { await document.fonts.load('800 40px Montserrat'); await document.fonts.load('italic 700 40px "Playfair Display"'); } catch (e) { }
   dirty = true;
   analyze(); makeThumbs();
@@ -1347,7 +1399,9 @@ $('#bRedo').onclick = () => restore(hi + 1);
 $('#bMagic').onclick = openMagic;
 $('#bFmt').onclick = openFmt;
 $('#bExport').onclick = openExport;
-$('#bHome').onclick = () => { if (confirm('Trocar de vídeo? A edição atual será perdida.')) { pause(); $('#file').value = ''; $('#file').click(); } };
+document.addEventListener('visibilitychange', () => { if (document.hidden && S.file) saveProject(); });
+$('#bHome').onclick = () => { if (confirm('Começar com outro vídeo? A edição atual fica salva só até você abrir o próximo.')) { pause(); resumeState = null; $('#file').value = ''; $('#file').click(); } };
+showResume();
 $('#file').onchange = e => { const f = e.target.files[0]; if (!f) { relink = false; return; } if (relink) { relink = false; relinkVideo(f); } else loadVideo(f); };
 window.addEventListener('resize', () => { fitCanvas(); dirty = true; });
 // se o arquivo ficar ilegível no meio da edição, oferece reconectar sem perder nada
