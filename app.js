@@ -1239,6 +1239,7 @@ async function exportRealtime(q) {
   try { wl && wl.release(); } catch (e) { }
   stream.getVideoTracks().forEach(t => t.stop());
   sizeCanvas(); seekOut(0);
+  if (err && (lostFile(String(err.message || err)) || lostFile(fastErr) || (video.error && video.error.code))) return askRelink();
   if (err) return sheet('A exportação falhou', `<p>${esc(String(err.message || err))}</p>
     ${fastErr ? `<p class="note">Modo rápido: ${esc(fastErr)}</p>` : ''}
     <p class="note">Tire um print desta tela e mande para o suporte. Tente de novo com a qualidade "Leve (720p)".</p>
@@ -1261,8 +1262,61 @@ function showResult(blob, ext) {
 }
 
 /* ---------- abrir vídeo ---------- */
-async function loadVideo(file) {
+/* Cópia própria do vídeo: no Android o acesso ao arquivo escolhido pode expirar
+   (a prévia fica preta e a exportação dá "network error"). Copiamos para o armazenamento do app. */
+async function ownCopy(file) {
+  try {
+    if (!navigator.storage || !navigator.storage.getDirectory) throw 0;
+    const dir = await navigator.storage.getDirectory();
+    for await (const name of dir.keys()) if (name.startsWith('video-')) { try { await dir.removeEntry(name); } catch (_) { } }
+    const fh = await dir.getFileHandle('video-' + Date.now(), { create: true });
+    if (!fh.createWritable) throw 0;
+    const w = await fh.createWritable(), rd = file.stream().getReader(); let done = 0;
+    for (; ;) {
+      const { value, done: end } = await rd.read(); if (end) break;
+      await w.write(value); done += value.byteLength;
+      busy('Preparando o vídeo…', 'Fazendo uma cópia para não perder o acesso ao arquivo', done / file.size);
+    }
+    await w.close();
+    const f = await fh.getFile();
+    return new File([f], file.name, { type: file.type || f.type });
+  } catch (e) {
+    if (file.size < 250e6) { try { return new File([await file.arrayBuffer()], file.name, { type: file.type }); } catch (_) { } }
+    return file;
+  }
+}
+let relink = false, loadingVid = false, relinkAsked = 0;
+async function relinkVideo(raw) {
+  busy('Abrindo o vídeo…'); loadingVid = true;
+  try { await relinkInner(raw); } finally { loadingVid = false; }
+}
+async function relinkInner(raw) {
+  const file = await ownCopy(raw), url = URL.createObjectURL(file);
+  const probe = document.createElement('video'); probe.muted = true; probe.preload = 'metadata';
+  try { await new Promise((res, rej) => { probe.onloadedmetadata = res; probe.onerror = rej; probe.src = url; }); }
+  catch (e) { idle(); URL.revokeObjectURL(url); return toast('Não consegui abrir este vídeo.', 4000); }
+  if (Math.abs(probe.duration - S.dur) > 0.25) { idle(); URL.revokeObjectURL(url); return toast('Esse não parece ser o mesmo vídeo (a duração é diferente). Escolha o mesmo arquivo.', 6000); }
+  probe.removeAttribute('src');
+  vids.forEach(v => v.pause()); if (srcUrl) URL.revokeObjectURL(srcUrl); srcUrl = url;
+  vids.forEach(v => v.src = url); tv.src = url; S.file = file; prepI = -1; waitSwap = false; act = 0; video = vids[0];
+  idle(); seekOut(curOut); dirty = true; thumbs = []; thumbN = 0; makeThumbs();
+  toast('Pronto! Vídeo reconectado, sua edição foi mantida.', 4000);
+}
+const lostFile = m => /network error|notreadable|could not be read|not.?found|permission|interrupted by a call to pause/i.test(m);
+function askRelink() {
+  sheet('Reconectar o vídeo', `<p>O celular parou de deixar o app ler o arquivo do vídeo (isso acontece no Android depois de um tempo ou se o vídeo está na nuvem).</p>
+    <p>Escolha <b>o mesmo vídeo</b> de novo: sua edição continua do jeito que está.</p>
+    <button class="btn wide" id="rlGo">Escolher o vídeo de novo</button>`, b => {
+    b.querySelector('#rlGo').onclick = () => { closeSheet(); relink = true; $('#file').value = ''; $('#file').click(); };
+  });
+}
+async function loadVideo(raw) {
+  loadingVid = true;
+  try { await loadInner(raw); } finally { loadingVid = false; }
+}
+async function loadInner(raw) {
   busy('Abrindo o vídeo…');
+  const file = await ownCopy(raw);
   vids.forEach(v => v.pause()); act = 0; video = vids[0]; prepI = -1; waitSwap = false;
   if (srcUrl) URL.revokeObjectURL(srcUrl);
   const url = srcUrl = URL.createObjectURL(file);
@@ -1294,8 +1348,13 @@ $('#bMagic').onclick = openMagic;
 $('#bFmt').onclick = openFmt;
 $('#bExport').onclick = openExport;
 $('#bHome').onclick = () => { if (confirm('Trocar de vídeo? A edição atual será perdida.')) { pause(); $('#file').value = ''; $('#file').click(); } };
-$('#file').onchange = e => { const f = e.target.files[0]; if (f) loadVideo(f); };
+$('#file').onchange = e => { const f = e.target.files[0]; if (!f) { relink = false; return; } if (relink) { relink = false; relinkVideo(f); } else loadVideo(f); };
 window.addEventListener('resize', () => { fitCanvas(); dirty = true; });
+// se o arquivo ficar ilegível no meio da edição, oferece reconectar sem perder nada
+vids.forEach(v => v.addEventListener('error', () => {
+  if (loadingVid || exporting || !S.file || $('#editor').hidden || Date.now() - relinkAsked < 8000) return;
+  relinkAsked = Date.now(); pause(); askRelink();
+}));
 requestAnimationFrame(loop);
 
 // modo de teste: index.html?v=arquivo.mp4 abre um vídeo da própria pasta
