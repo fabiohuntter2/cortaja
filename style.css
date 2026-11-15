@@ -53,6 +53,7 @@ header{display:flex;align-items:center;gap:8px;padding:6px 10px}
 .tbar,.cap{position:absolute;height:20px;border-radius:5px;font-size:10.5px;font-weight:600;line-height:20px;padding:0 5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .tbar{top:10px;background:#f59e0b;color:#231500}
 .tbar.lt{background:#38bdf8;color:#04202e}
+.tbar.fx{background:#ff4a3a;color:#fff}
 .cap{top:34px;background:#1b6f63;color:#d9fff7}
 .seg{position:absolute;top:60px;height:62px;border-radius:8px;overflow:hidden;background:#222733;display:flex;outline:2px solid transparent;outline-offset:-2px}
 .seg canvas{height:62px;flex:none;display:block}
@@ -83,7 +84,7 @@ label.fld{display:grid;gap:6px;font-size:12.5px;color:var(--mut);font-weight:600
 label.fld span b{color:var(--tx);float:right}
 input[type=range]{width:100%;accent-color:var(--acc);height:28px}
 textarea{min-height:64px;resize:none}
-textarea,input[type=text],select{margin-bottom:8px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;outline:none}
+textarea,input[type=text],input[type=number],select{margin-bottom:8px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;outline:none}
 textarea:focus,input[type=text]:focus{border-color:var(--acc)}
 .tabs{display:flex;background:var(--panel2);border-radius:12px;padding:3px}
 .tabs button{flex:1;padding:8px 4px;border-radius:9px;font-weight:600;font-size:13px;color:var(--mut)}

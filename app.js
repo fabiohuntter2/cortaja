@@ -38,13 +38,14 @@ const ICON = {
   zoom: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.5-4.5M11 8v6M8 11h6"/></svg>',
   dividir: '<svg viewBox="0 0 24 24"><path d="M12 3v18M8 7H4v10h4M16 7h4v10h-4"/></svg>',
   moldura: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>',
+  motion: '<svg viewBox="0 0 24 24"><path d="M4 17c3-8 6-8 8-4s5 4 8-4"/><circle cx="19" cy="6" r="1.6" fill="currentColor"/><path d="M3 21h18"/></svg>',
   tarja: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14h12l2 3H3z" fill="currentColor"/><path d="M6 11h7"/></svg>',
   marca: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><rect x="12.5" y="6.5" width="6" height="4" rx="1"/></svg>',
   excluir: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
 };
 
 const TOOLS = [
-  ['limpo', 'Corte limpo'], ['legendas', 'Legendas'], ['moldura', 'Moldura'], ['tarja', 'Tarjas'], ['texto', 'Texto'],
+  ['limpo', 'Corte limpo'], ['legendas', 'Legendas'], ['motion', 'Motion'], ['moldura', 'Moldura'], ['tarja', 'Tarjas'], ['texto', 'Texto'],
   ['trans', 'Transições'], ['marca', 'Marca'], ['zoom', 'Zoom'], ['pausas', 'Pausas'], ['dividir', 'Dividir'], ['excluir', 'Excluir'],
 ];
 const FORMATS = { orig: ['Original', 0], '9:16': ['9:16 Reels', 9 / 16], '4:5': ['4:5 Feed', 4 / 5], '1:1': ['1:1', 1], '16:9': ['16:9', 16 / 9] };
@@ -80,7 +81,7 @@ const S = {
   frame: { on: false, style: 'jornal', color: '#e11d2a', text: '', tag: 'URGENTE' },
 };
 const SAVED = ['segs', 'words', 'texts', 'caps', 'zoom', 'fmt', 'frame'];
-let offs = [], total = 0, groups = [], zplan = [];
+let offs = [], total = 0, groups = [], zplan = [], visW = [];
 let curSeg = 0, curOut = 0, playing = false, exporting = false, dirty = true, pendingT = null;
 let sel = -1, selText = null, hist = [], hi = -1;
 let A = null, analysisP = null, thumbs = [], thumbN = 0, tileW = 30, segCanvases = [];
@@ -363,7 +364,7 @@ async function cleanCut() {
 
 /* ---------- legendas ---------- */
 function buildGroups() {
-  groups = [];
+  groups = []; visW = [];
   if (!S.words) return;
   const N = S.caps.n || CAPSTYLES[S.caps.style].n, maxC = N * 9, vis = [];
   for (const w of S.words) {
@@ -373,6 +374,7 @@ function buildGroups() {
     const g = S.segs[i], o0 = offs[i] + Math.max(w.t0, g.s) - g.s, o1 = offs[i] + Math.min(w.t1, g.e) - g.s;
     vis.push({ w, text: w.text, o0, o1: Math.max(o1, o0 + 0.04) });
   }
+  visW = vis;
   let cur = null, chars = 0;
   for (const v of vis) {
     const prev = cur && cur.ws[cur.ws.length - 1];
@@ -455,6 +457,7 @@ function drawTexts(c, W, H, o) {
     t._box = null;
     if (o < t.t0 || o >= t.t1) continue;
     if (t.kind === 'lt') { drawLT(c, W, H, o, t); continue; }
+    if (t.kind === 'fx') { drawFX(c, W, H, o, t); continue; }
     const fs = t.size * u, lines = t.text.split('\n'), lh = fs * 1.28;
     c.save(); c.font = `800 ${fs}px ${SANS}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
     const a = Math.min(1, (o - t.t0) / 0.15), cx = t.x * W, cy = t.y * H;
@@ -472,6 +475,258 @@ function drawTexts(c, W, H, o) {
     t._box = [cx - bw / 2 - fs * .4, cy - bh / 2, bw + fs * .8, bh];
     if (selText === t.id && !exporting) { c.save(); c.strokeStyle = '#fff'; c.lineWidth = 2 * u + 1; c.setLineDash([8 * u + 2, 6 * u + 2]); c.strokeRect(...t._box); c.restore(); }
   }
+}
+
+/* ---------- motion (estilo notícia preto e vermelho; textos sempre tirados da fala) ---------- */
+const MX = { red: '#FF4A3A', red2: '#E83426', salmon: '#F69680', white: '#F5F2EE', gray: '#C8BEBA', card: '#1E1817', bg: '#0A0909' };
+const FXS = {
+  titulo: ['Título numerado', 'Número "01 / 05", título grande e subtítulo em itálico no topo'],
+  doodle: ['Palavra rabiscada', 'Uma palavra de impacto com rabisco à mão "fervendo"'],
+  mural: ['Mural de manchetes', 'Até 4 etiquetas inclinadas que entram quando são ditas'],
+  vidro: ['Texto 3D', 'Frase-síntese em letras 3D vermelhas com brilho'],
+  anel: ['Zoom com anel', 'Anel vermelho que se expande e empurra o zoom na frase de virada'],
+  cam: ['Câmera em card', 'O vídeo vira um card "CAM · 01" sobre fundo escuro com brilho vermelho'],
+};
+const STOP = new Set('a o as os um uma uns umas de da do das dos em na no nas nos por para pra com sem que e é ou se mas mais muito muita já não sim eu tu ele ela nós vós eles elas me te lhe isso isto esse essa este esta aquele aquela aqui ali lá então tá né foi ser ter tem vai vou ao aos à às pelo pela pelos pelas seu sua seus suas meu minha nosso nossa também como quando onde porque porquê qual quais quem'.split(' '));
+const clean = w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+const easeBack = p => { p = clamp(p, 0, 1); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+const smooth = p => { p = clamp(p, 0, 1); return p * p * (3 - 2 * p); };
+const rnd = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const wordsIn = (a, b) => visW.filter(v => v.o0 >= a - 0.05 && v.o0 < b);
+function fitFont(c, txt, weight, size, maxW, fam = SANS) {
+  let f = size; c.font = `${weight} ${f}px ${fam}`;
+  while (f > 20 && c.measureText(txt).width > maxW) { f -= 2; c.font = `${weight} ${f}px ${fam}`; }
+  return f;
+}
+const logoOff = (W, H) => { const L = cfg.logo; return L && L.on && marcaImg.naturalWidth ? Math.min(W, H) * (L.size * MARCA.fh / MARCA.fw + 0.02) : 0; };
+function fxFade(o, t, inD = 0.25, outD = 0.3) { return clamp(Math.min((o - t.t0) / inD, (t.t1 - o) / outD), 0, 1); }
+
+/* zoom de empurrão do efeito "anel" */
+function fxZoom(o) {
+  let z = 1;
+  for (const t of S.texts) if (t.kind === 'fx' && t.fx === 'anel' && o >= t.t0 && o < t.t0 + 1.4) {
+    const p = (o - t.t0) / 1.4; z *= 1 + 0.45 * Math.sin(Math.PI * smooth(p));
+  }
+  return z;
+}
+/* layout "câmera em card": encolhe o quadro já desenhado para dentro de um card */
+let camCv = null;
+function camLayout(W, H, o) {
+  const t = S.texts.find(t => t.kind === 'fx' && t.fx === 'cam' && o >= t.t0 && o < t.t1); if (!t) return;
+  const k = Math.min(W, H) / 1080, d = o - t.t0, r = t.t1 - o;
+  const pin = smooth(d / 0.45), pout = smooth(r / 0.45), m = Math.min(pin, pout), pop = d < 0.6 ? easeBack(d / 0.6) : 1;
+  const top = 330 * k + logoOff(W, H), cw0 = 800 * k, ch = Math.min(H - top - 60 * k, cw0 * H / W), cw = Math.min(cw0, ch * W / H), cx = (W - cw) / 2, cy = top;
+  const sc = 0.86 + 0.14 * pop;
+  const x = cx + (cw - cw * sc) / 2, y = cy + (ch - ch * sc) / 2, w = cw * sc, h = ch * sc;
+  const X = x * m, Y = y * m, Wd = W + (w - W) * m, Hd = H + (h - H) * m;
+  if (!camCv) camCv = document.createElement('canvas');
+  if (camCv.width !== W || camCv.height !== H) { camCv.width = W; camCv.height = H; }
+  const cc = camCv.getContext('2d'); cc.drawImage(cv, 0, 0);
+  ctx.save();
+  ctx.fillStyle = MX.bg; ctx.fillRect(0, 0, W, H);
+  for (const [gx, gy, gr] of [[0, H * .5, W * .9], [W * .6, H, W * 1.1]]) {
+    const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr); g.addColorStop(0, 'rgba(185,28,20,.55)'); g.addColorStop(1, 'rgba(185,28,20,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  const rad = 40 * k * m;
+  ctx.save(); rr(ctx, X, Y, Wd, Hd, rad); ctx.clip();
+  // mantém o vídeo inteiro no card (corta só o excesso de proporção)
+  const s2 = Math.max(Wd / W, Hd / H), sw = Wd / s2, sh = Hd / s2;
+  ctx.drawImage(camCv, (W - sw) / 2, (H - sh) * 0.4, sw, sh, X, Y, Wd, Hd); ctx.restore();
+  ctx.strokeStyle = MX.red; ctx.lineWidth = 3 * k + 1; ctx.shadowColor = MX.red; ctx.shadowBlur = 24 * k * m;
+  rr(ctx, X, Y, Wd, Hd, rad); ctx.globalAlpha = m; ctx.stroke(); ctx.shadowBlur = 0;
+  // etiqueta CAM · 01
+  const px = X + 26 * k, py = Y + 26 * k; ctx.font = `700 ${28 * k}px ui-monospace, monospace`;
+  const lbl = t.text || 'CAM · 01', lw = ctx.measureText(lbl).width + 70 * k;
+  ctx.fillStyle = 'rgba(10,9,9,.8)'; rr(ctx, px, py, lw, 50 * k, 25 * k); ctx.fill();
+  if (Math.floor(o * 1.6) % 2 === 0) { ctx.fillStyle = MX.red; ctx.beginPath(); ctx.arc(px + 26 * k, py + 25 * k, 9 * k, 0, 7); ctx.fill(); }
+  ctx.fillStyle = MX.white; ctx.textBaseline = 'middle'; ctx.fillText(lbl, px + 46 * k, py + 26 * k);
+  ctx.restore();
+}
+
+function drawFX(c, W, H, o, t) {
+  const k = Math.min(W, H) / 1080, d = o - t.t0, a = fxFade(o, t), up = s2 => (s2 || '').toUpperCase();
+  c.save(); c.textBaseline = 'alphabetic'; c.textAlign = 'center';
+  let box = null;
+  if (t.fx === 'titulo') {
+    const off = logoOff(W, H);
+    c.translate(0, off);
+    const g = c.createLinearGradient(0, -off, 0, 380 * k); g.addColorStop(0, `rgba(10,9,9,${.8 * a})`); g.addColorStop(1, 'rgba(10,9,9,0)');
+    c.fillStyle = g; c.fillRect(0, -off, W, 380 * k + off);
+    c.globalAlpha = a;
+    c.font = `700 ${28 * k}px ui-monospace, monospace`; c.fillStyle = MX.red;
+    if ('letterSpacing' in c) c.letterSpacing = `${6 * k}px`;
+    const pad = n => String(n).padStart(2, '0');
+    c.fillText(`${pad(t.n || 1)}  /  ${pad(t.N || 1)}`, W / 2, 78 * k);
+    if ('letterSpacing' in c) c.letterSpacing = '0px';
+    const sc = 0.92 + 0.08 * easeBack(d / 0.5);
+    c.save(); c.translate(W / 2, 190 * k); c.scale(sc, sc);
+    const f = fitFont(c, up(t.text), 900, 104 * k, 980 * k); c.fillStyle = MX.white; c.shadowColor = 'rgba(0,0,0,.5)'; c.shadowBlur = 12 * k;
+    c.fillText(up(t.text), 0, 0); c.restore();
+    if (t.sub) { c.globalAlpha = a * clamp((d - 0.2) / 0.3, 0, 1); fitFont(c, t.sub, 'italic 700', 50 * k, 960 * k, SERIF); c.fillStyle = MX.salmon; c.fillText(t.sub, W / 2, 268 * k); }
+    box = [40 * k, 40 * k + off, W - 80 * k, 250 * k];
+  } else if (t.fx === 'doodle') {
+    const y = t.y * H, sc = easeBack(d / 0.35);
+    c.globalAlpha = a; c.save(); c.translate(t.x * W, y); c.scale(sc, sc);
+    const f = fitFont(c, up(t.text), 'italic 900', 150 * k, 900 * k), tw = c.measureText(up(t.text)).width;
+    c.fillStyle = MX.white; c.shadowColor = 'rgba(0,0,0,.6)'; c.shadowBlur = 16 * k; c.fillText(up(t.text), 0, f * 0.35); c.shadowBlur = 0;
+    // rabisco redesenhado 8x por segundo (efeito "fervendo")
+    const seed = Math.floor(o * 8), rx = tw / 2 + 50 * k, ry = f * 0.85;
+    c.strokeStyle = MX.salmon; c.lineWidth = 8 * k; c.lineCap = 'round'; c.lineJoin = 'round';
+    const draw = Math.min(1, d / 0.5);
+    c.beginPath();
+    for (let i = 0; i <= 44 * draw; i++) {
+      const an = -Math.PI * .6 + i / 40 * Math.PI * 2, j = 1 + (rnd(seed * 50 + i) - .5) * .08;
+      c.lineTo(Math.cos(an) * rx * j, Math.sin(an) * ry * j);
+    }
+    c.stroke();
+    for (let i = 0; i < 3; i++) {
+      const an = -Math.PI * (.62 + i * .12), r1 = rx + 20 * k, r2 = rx + (60 + rnd(seed + i) * 20) * k;
+      c.beginPath(); c.moveTo(Math.cos(an) * r1, Math.sin(an) * r1 * .8); c.lineTo(Math.cos(an) * r2, Math.sin(an) * r2 * .8); c.stroke();
+    }
+    c.beginPath();
+    for (let i = 0; i <= 20; i++) { const x = -tw / 2 + tw * i / 20; c.lineTo(x, ry + 26 * k + Math.sin(i * 1.4 + seed) * 9 * k); }
+    c.stroke(); c.restore();
+    box = [t.x * W - rx, y - ry, rx * 2, ry * 2 + 40 * k];
+  } else if (t.fx === 'mural') {
+    const tags = (t.items && t.items.length ? t.items : (t.text || '').split('|').map(x => ({ text: x.trim() }))).filter(x => x.text).slice(0, 4);
+    const cols = [[MX.white, '#111'], [MX.red2, '#fff'], [MX.card, MX.white], [MX.salmon, '#1a0a08']];
+    tags.forEach((tg, i) => {
+      const at = tg.o != null ? tg.o : t.t0 + i * 0.5, p = (o - at) / 0.35;
+      if (o < at) return;
+      const e = easeBack(p), y = t.y * H + i * 118 * k, side = i % 2 ? 1 : -1, rot = (i % 2 ? 3 : -3) * Math.PI / 180;
+      c.save(); c.globalAlpha = a * clamp(p * 2, 0, 1);
+      c.translate(W / 2 + side * 60 * k + side * (1 - e) * 500 * k, y); c.rotate(rot); const sc = 1.25 - 0.25 * e; c.scale(sc, sc);
+      const f = fitFont(c, up(tg.text), 900, 60 * k, 820 * k), tw = c.measureText(up(tg.text)).width;
+      c.fillStyle = cols[i][0]; c.fillRect(-tw / 2 - 28 * k, -f * .85, tw + 56 * k, f * 1.3);
+      c.fillStyle = cols[i][1]; c.textBaseline = 'middle'; c.fillText(up(tg.text), 0, -f * .2);
+      c.restore();
+    });
+    box = [80 * k, t.y * H - 60 * k, W - 160 * k, 118 * k * Math.max(1, tags.length)];
+  } else if (t.fx === 'vidro') {
+    const y = t.y * H, sc = 0.7 + 0.3 * easeBack(d / 0.45), lines = [up(t.text), up(t.sub)].filter(Boolean);
+    c.globalAlpha = a; c.save(); c.translate(t.x * W, y); c.scale(sc, sc);
+    lines.forEach((ln, li) => {
+      const f = fitFont(c, ln, 900, (li ? 96 : 130) * k, 960 * k), yy = li * f * 1.1 + (li ? 30 * k : 0);
+      for (let L = 14; L > 0; L--) { c.fillStyle = `rgb(${40 + L * 3},${8 + L},${6 + L})`; c.fillText(ln, L * 1.3 * k, yy + L * 1.7 * k); }
+      const g = c.createLinearGradient(0, yy - f * .8, 0, yy + f * .1);
+      g.addColorStop(0, MX.salmon); g.addColorStop(.5, MX.red); g.addColorStop(1, '#8e130c');
+      c.shadowColor = 'rgba(255,74,58,.6)'; c.shadowBlur = 30 * k; c.fillStyle = g; c.fillText(ln, 0, yy); c.shadowBlur = 0;
+      c.save(); c.beginPath(); c.rect(-W, yy - f * .8, W * 2, f * .22); c.clip(); c.fillStyle = 'rgba(255,255,255,.35)'; c.fillText(ln, 0, yy); c.restore();
+    });
+    c.restore();
+    box = [80 * k, y - 140 * k, W - 160 * k, 280 * k];
+  } else if (t.fx === 'anel') {
+    const p = clamp(d / 0.9, 0, 1), R = 170 * k + (1600 * k - 170 * k) * easeOut(p), cx = W / 2, cy = H * 0.42;
+    if (p < 1) { c.globalAlpha = (1 - p) * a; c.strokeStyle = MX.red; c.lineWidth = 16 * k; c.shadowColor = MX.red; c.shadowBlur = 40 * k; c.beginPath(); c.arc(cx, cy, R, 0, 7); c.stroke(); c.shadowBlur = 0; }
+    if (t.text) {
+      const q = clamp((d - 0.35) / 0.3, 0, 1); c.globalAlpha = a * q;
+      c.save(); c.translate(W / 2, t.y * H); const s3 = 0.9 + 0.1 * easeBack(q); c.scale(s3, s3);
+      fitFont(c, up(t.text), 900, 92 * k, 960 * k); c.fillStyle = MX.white; c.shadowColor = 'rgba(0,0,0,.7)'; c.shadowBlur = 18 * k; c.fillText(up(t.text), 0, 0); c.restore();
+    }
+    box = [80 * k, t.y * H - 90 * k, W - 160 * k, 120 * k];
+  } else if (t.fx === 'cam') {
+    box = null;
+  }
+  c.restore();
+  t._box = box;
+  if (box && selText === t.id && !exporting) { c.save(); c.strokeStyle = '#fff'; c.lineWidth = 2 * k + 1; c.setLineDash([8 * k + 2, 6 * k + 2]); c.strokeRect(...box); c.restore(); }
+}
+
+/* escolhas automáticas a partir da fala */
+function blocksFromSpeech() {
+  const B = []; let cur = null;
+  for (let i = 0; i < visW.length; i++) {
+    const v = visW[i], prev = visW[i - 1], gap = prev ? v.o0 - prev.o1 : 9;
+    const end = /[.!?…]$/.test(prev ? prev.text : '');
+    if (!cur || (cur.ws.length && v.o0 - cur.o0 > 6 && (gap > 0.45 || end)) || v.o0 - (cur ? cur.o0 : 0) > 14) { cur = { ws: [], o0: v.o0 }; B.push(cur); }
+    cur.ws.push(v); cur.o1 = v.o1;
+  }
+  // junta blocos muito curtos com o anterior
+  for (let i = B.length - 1; i > 0; i--) if (B[i].o1 - B[i].o0 < 3) { B[i - 1].ws.push(...B[i].ws); B[i - 1].o1 = B[i].o1; B.splice(i, 1); }
+  return B;
+}
+const firstPhrase = (ws, n) => { const out = []; for (const w of ws) { out.push(clean(w.text)); if (out.length >= n || /[.!?,;:…]$/.test(w.text)) break; } return out.filter(Boolean).join(' '); };
+const keyWords = ws => ws.filter(w => { const c2 = clean(w.text).toLowerCase(); return c2.length >= 5 && !STOP.has(c2); });
+function autoMotion() {
+  if (!visW.length) return false;
+  S.texts = S.texts.filter(t => t.kind !== 'fx');
+  const B = blocksFromSpeech(), N = Math.min(B.length, 9), add = t => S.texts.push({ id: 'f' + Math.random().toString(36).slice(2, 9), kind: 'fx', x: 0.5, y: 0.66, ...t });
+  const cycle = ['doodle', 'mural', 'vidro', 'anel'];
+  add({ fx: 'cam', text: 'CAM · 01', t0: 0, t1: Math.min(total, Math.max(3.5, B[0] ? B[0].o1 * 0.5 : 4)) });
+  B.slice(0, N).forEach((b, i) => {
+    const ttl = firstPhrase(b.ws, 4), rest = b.ws.slice(ttl.split(' ').length);
+    add({ fx: 'titulo', text: ttl, sub: firstPhrase(rest, 5), n: i + 1, N, t0: b.o0, t1: Math.min(b.o0 + 3.2, b.o1), y: 0.1 });
+    const kw = keyWords(b.ws).filter(w => w.o0 > b.o0 + 3.3), kind = cycle[i % cycle.length];
+    if (!kw.length) return;
+    if (kind === 'doodle') { const w = kw.reduce((m2, w2) => clean(w2.text).length > clean(m2.text).length ? w2 : m2); add({ fx: 'doodle', text: clean(w.text), t0: w.o0, t1: Math.min(b.o1, w.o0 + 1.8) }); }
+    else if (kind === 'mural') { const seen = new Set(), items = []; for (const w of kw) { const c2 = clean(w.text); if (!seen.has(c2.toLowerCase())) { seen.add(c2.toLowerCase()); items.push({ text: c2, o: w.o0 }); } if (items.length === 4) break; }
+      add({ fx: 'mural', items, text: items.map(x => x.text).join(' | '), t0: items[0].o, t1: Math.min(b.o1, items[items.length - 1].o + 2), y: 0.62 }); }
+    else if (kind === 'vidro') {
+      const sents = []; let cs = [];
+      for (const w of b.ws) { cs.push(w); if (/[.!?…]$/.test(w.text)) { sents.push(cs); cs = []; } }
+      if (cs.length) sents.push(cs);
+      const cand = sents.filter(x => x.length >= 2 && x[0].o0 > b.o0 + 3.3).sort((p2, q2) => p2.length - q2.length)[0] || sents[sents.length - 1];
+      const ws2 = cand.slice(0, 6), ci = ws2.findIndex(w => /,$/.test(w.text)), cut = ci >= 0 && ci < ws2.length - 1 ? ci + 1 : Math.min(2, ws2.length);
+      add({ fx: 'vidro', text: ws2.slice(0, cut).map(w => clean(w.text)).join(' '), sub: ws2.slice(cut).map(w => clean(w.text)).join(' '),
+        t0: Math.max(ws2[0].o0, b.o0 + 3.3), t1: Math.min(total, ws2[ws2.length - 1].o1 + 1.5), y: 0.7 }); }
+    else { const w = kw[0], idx = b.ws.indexOf(w); add({ fx: 'anel', text: b.ws.slice(idx, idx + 3).map(x => clean(x.text)).join(' '), t0: w.o0, t1: Math.min(b.o1, w.o0 + 2.2), y: 0.68 }); }
+  });
+  return true;
+}
+
+function openMotion(id) {
+  pause();
+  const t = id && S.texts.find(t => t.id === id);
+  if (!t) {
+    const n = S.texts.filter(x => x.kind === 'fx').length;
+    sheet('Motion', `<p>Efeitos no estilo de notícia preto e vermelho. Os textos vêm da sua fala (dá para editar).</p>
+      <button class="btn wide" id="mxAuto">Estilo notícia automático</button>
+      ${S.words ? '' : '<p class="note">Para o automático, gere as legendas primeiro (Legendas → Gerar). Ele precisa saber o que foi falado.</p>'}
+      <p class="note">Ou adicione um efeito no ponto da agulha:</p>
+      <div class="grid2">${Object.entries(FXS).map(([k2, v]) => `<button class="sty" data-fxa="${k2}"><span style="font-size:13px">${v[0]}</span><small>${v[1]}</small></button>`).join('')}</div>
+      ${n ? `<button class="btn danger wide" id="mxClr">Remover os ${n} efeitos</button>` : ''}`, b => {
+      b.querySelector('#mxAuto').onclick = () => {
+        if (!S.words) return toast('Gere as legendas primeiro: o automático usa as palavras da fala.', 4500);
+        if (!autoMotion()) return toast('Não encontrei fala suficiente para montar os efeitos.', 4000);
+        commit(); closeSheet(); seekOut(0); toast(`Pronto: ${S.texts.filter(x => x.kind === 'fx').length} efeitos montados com a sua fala. Toque ▶ para ver.`, 4500);
+      };
+      on(b, '[data-fxa]', 'click', el => {
+        const fx = el.dataset.fxa, t0 = Math.min(curOut, Math.max(0, total - 0.5)), ws = wordsIn(t0, t0 + 3).map(w => clean(w.text)).filter(Boolean);
+        const kw = ws.filter(w => w.length >= 5 && !STOP.has(w.toLowerCase()));
+        const nt = { id: 'f' + Date.now(), kind: 'fx', fx, x: 0.5, y: { titulo: 0.1, mural: 0.62, vidro: 0.7, anel: 0.68, doodle: 0.66, cam: 0.5 }[fx], t0,
+          t1: Math.min(total, t0 + ({ cam: 5, titulo: 3.2, mural: 3.5 }[fx] || 2.2)), n: 1, N: 1,
+          text: fx === 'cam' ? 'CAM · 01' : fx === 'doodle' ? (kw.sort((p2, q2) => q2.length - p2.length)[0] || ws[0] || 'IMPACTO') : fx === 'mural' ? (kw.slice(0, 4).join(' | ') || 'MANCHETE') : ws.slice(0, fx === 'titulo' ? 4 : 3).join(' ') || 'SEU TEXTO',
+          sub: fx === 'titulo' ? ws.slice(4, 9).join(' ') : '' };
+        S.texts.push(nt); commit(); openMotion(nt.id);
+      });
+      const clr = b.querySelector('#mxClr'); if (clr) clr.onclick = () => { S.texts = S.texts.filter(x => x.kind !== 'fx'); selText = null; commit(); openMotion(); };
+    });
+    return;
+  }
+  selText = t.id; dirty = true;
+  if (curOut < t.t0 + 0.3 || curOut >= t.t1) seekOut(Math.min(t.t0 + (t.fx === 'titulo' ? 0.8 : 0.6), t.t1 - 0.05));
+  const hasSub = t.fx === 'titulo' || t.fx === 'vidro';
+  sheet(FXS[t.fx][0], `<p class="note">${FXS[t.fx][1]}</p>
+    <input type="text" id="mxT" value="${esc(t.text || '')}" placeholder="${t.fx === 'mural' ? 'Etiquetas separadas por |' : 'Texto'}">
+    ${hasSub ? `<input type="text" id="mxS" value="${esc(t.sub || '')}" placeholder="${t.fx === 'titulo' ? 'Subtítulo (opcional)' : 'Segunda linha (opcional)'}">` : ''}
+    ${t.fx === 'titulo' ? `<div class="row"><label class="fld grow">Número<input type="number" id="mxN" min="1" max="99" value="${t.n || 1}"></label><label class="fld grow">De<input type="number" id="mxNN" min="1" max="99" value="${t.N || 1}"></label></div>` : ''}
+    ${t.fx !== 'titulo' && t.fx !== 'cam' ? '<p class="note">Dica: arraste o efeito no vídeo para mudar a altura.</p>' : ''}
+    <p class="note" id="mxI"></p>
+    <div class="row"><button class="chip" id="mxA">Começa na agulha</button><button class="chip" id="mxB">Termina na agulha</button></div>
+    <button class="btn ghost wide" id="mxBack">Outros efeitos</button>
+    <button class="btn danger wide" id="mxDel">Excluir efeito</button>`, b => {
+    const info = () => b.querySelector('#mxI').textContent = `Aparece de ${fmtT(t.t0)} até ${fmtT(Math.min(t.t1, total))}`; info();
+    const iT = b.querySelector('#mxT'), iS = b.querySelector('#mxS');
+    iT.oninput = () => { t.text = iT.value; if (t.fx === 'mural') t.items = null; dirty = true; }; iT.onchange = () => commit();
+    if (iS) { iS.oninput = () => { t.sub = iS.value; dirty = true; }; iS.onchange = () => commit(); }
+    on(b, '#mxN', 'change', el => { t.n = +el.value || 1; commit(); });
+    on(b, '#mxNN', 'change', el => { t.N = +el.value || 1; commit(); });
+    b.querySelector('#mxA').onclick = () => { if (curOut >= t.t1 - 0.2) t.t1 = Math.min(total, curOut + 2.5); t.t0 = Math.min(curOut, t.t1 - 0.2); if (t.items) t.items = null; commit(); info(); };
+    b.querySelector('#mxB').onclick = () => { if (curOut <= t.t0 + 0.2) return toast('Mova a agulha para depois do começo.'); t.t1 = curOut; commit(); info(); };
+    b.querySelector('#mxBack').onclick = () => { selText = null; openMotion(); };
+    b.querySelector('#mxDel').onclick = () => { S.texts = S.texts.filter(x => x !== t); selText = null; commit(); closeSheet(); };
+  });
 }
 
 /* ---------- molduras ---------- */
@@ -823,7 +1078,7 @@ function draw(paint) {
     const g = S.segs[curSeg], d = o - offs[curSeg], nx = S.segs[curSeg + 1];
     const f = trFx(g && curSeg > 0 ? g.tr : '', d, nx ? nx.tr : '', g ? (g.e - g.s) - d : 9, W, H);
     ov = f.ov;
-    const z = zoomAt(o) * f.z;
+    const z = zoomAt(o) * f.z * fxZoom(o);
     const s0 = Math.max(W / S.vw, H / S.vh), x0 = (W - S.vw * s0) / 2, y0 = (H - S.vh * s0) / 2, cx = W / 2, cy = H * 0.42;
     const dx = cx - (cx - x0) * z, dy = cy - (cy - y0) * z, dw = S.vw * s0 * z, dh = S.vh * s0 * z;
     const src = (x, y) => paint ? paint(ctx, dx + x, dy + y, dw, dh) : ctx.drawImage(video, dx + x, dy + y, dw, dh);
@@ -851,6 +1106,7 @@ function draw(paint) {
     if (f.blur > 0.5) softBlur(f.blur * 1080 / W);
   }
   if (ov) { ctx.globalAlpha = clamp(ov[1], 0, 1); ctx.fillStyle = ov[0]; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+  camLayout(W, H, o);
   drawFrame(ctx, W, H, o);
   drawCaps(ctx, W, H, o);
   drawTexts(ctx, W, H, o);
@@ -924,7 +1180,7 @@ function buildTimeline() {
   tlc.innerHTML = ''; segCanvases = [];
   const dpr = Math.min(2, devicePixelRatio || 1), frag = document.createDocumentFragment();
   for (const t of S.texts) {
-    const el = document.createElement('div'); el.className = 'tbar' + (t.kind === 'lt' ? ' lt' : ''); el.dataset.id = t.id; el.textContent = t.text.replace(/\n/g, ' ');
+    const el = document.createElement('div'); el.className = 'tbar' + (t.kind === 'lt' ? ' lt' : t.kind === 'fx' ? ' fx' : ''); el.dataset.id = t.id; el.textContent = t.text.replace(/\n/g, ' ');
     el.style.left = t.t0 * PPS + 'px'; el.style.width = Math.max(14, (Math.min(t.t1, total) - t.t0) * PPS) + 'px'; frag.appendChild(el);
   }
   if (S.caps.on) for (const g of groups) {
@@ -1134,7 +1390,7 @@ function openCaps(tab = 'style') {
   });
 }
 
-const openAny = id => { const t = S.texts.find(t => t.id === id); return t && t.kind === 'lt' ? openLT(id) : openText(id); };
+const openAny = id => { const t = S.texts.find(t => t.id === id); return t && t.kind === 'lt' ? openLT(id) : t && t.kind === 'fx' ? openMotion(id) : openText(id); };
 function openText(id) {
   pause();
   let t = S.texts.find(t => t.id === id);
@@ -1519,7 +1775,7 @@ async function loadInner(raw, proj) {
 $('#bPlay').innerHTML = ICON.play; $('#bUndo').innerHTML = ICON.undo; $('#bRedo').innerHTML = ICON.redo;
 $('#bHome').innerHTML = ICON.home; $('#shClose').innerHTML = ICON.close; $('#bMagic').innerHTML = ICON.magic;
 $('#tools').innerHTML = TOOLS.map(([k, n]) => `<button data-tool="${k}">${ICON[k]}<span>${n}</span></button>`).join('');
-const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, tarja: () => openLT(), moldura: openFrame, dividir: splitHere, excluir: deleteSeg };
+const ACT = { limpo: openLimpo, pausas: openPausas, legendas: () => openCaps(), texto: () => openText(), trans: openTrans, zoom: openZoom, marca: openMarca, tarja: () => openLT(), moldura: openFrame, motion: () => openMotion(), dividir: splitHere, excluir: deleteSeg };
 // mostra que a barra de ferramentas desliza para o lado
 function nudgeTools() { const t = $('#tools'); setTimeout(() => { t.scrollTo({ left: 140, behavior: 'smooth' }); setTimeout(() => t.scrollTo({ left: 0, behavior: 'smooth' }), 700); }, 900); }
 $('#tools').addEventListener('scroll', e => e.target.classList.toggle('end', e.target.scrollLeft + e.target.clientWidth >= e.target.scrollWidth - 4), { passive: true });
